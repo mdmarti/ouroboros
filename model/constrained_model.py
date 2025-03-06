@@ -290,7 +290,7 @@ class arneodobouros(nn.Module):
         self.tau = tau
         self.smooth_len = smooth_len
         self.noInput = noInput
-        self.names = [rf"$\alpha$",rf"$\beta$",'d','states']
+        self.names = [rf"$\alpha$",rf"$\beta$",'states']
 
     def forward(self,x,dt):
 
@@ -309,19 +309,17 @@ class arneodobouros(nn.Module):
         alphaControl = self.alphaMamba(x_in)
         betaControl = self.betaMamba(x_in)
 
-        if self.noInput:
-            d = torch.zeros(d.shape,device='cuda')
         alpha = self.alpha_net(alphaControl)
         beta = self.beta_net(betaControl)
-        d, beta = smooth(d.abs(),smooth_len),smooth(beta.abs(),smooth_len)
+        #d, beta = smooth(d.abs(),smooth_len),smooth(beta.abs(),smooth_len)
         z[:,:,-1] /= dt
         z1 = z[:,:,:1]
         z1_2 = z[:,:,:1]**2 
         z1_3 = z[:,:,:1]**3 
         z2 = z[:,:,1:]
 
-        yhat = alpha + beta.abs()**2 *z1 + z1_2 - z1_3 - z1 * z2/self.tau - z1_2 * z2/self.tau - d 
-        return yhat, torch.cat([alphaControl,betaControl,dControl]),torch.zeros((1,),device=self.device)
+        yhat = alpha + beta.abs()**2 *z1 + z1_2 - z1_3 - z1 * z2/self.tau - z1_2 * z2/self.tau 
+        return yhat, torch.cat([alphaControl,betaControl]),torch.zeros((1,),device=self.device)
     
     def get_funcs(self,x,dt):
 
@@ -334,20 +332,13 @@ class arneodobouros(nn.Module):
         
         z = torch.cat([x[:,4:-4,:],xdot],dim=-1)
         L = z.shape[1]
-        x_in = torch.cat([z, torch.flip(z,[1])],dim=-1)
+        x_in = torch.cat([z, torch.flip(z,[1])],dim=1)
         alphaControl = self.alphaMamba(x_in)
         betaControl = self.betaMamba(x_in)
-        dControl = self.dMamba(x_in)
-        
-        
-        #dControl=smooth(dControl.abs(),smooth_len)
-        #betaControl=smooth(betaControl.abs(),smooth_len)
-        d = self.d_net(dControl)
-        if self.noInput:
-            d = torch.zeros(d.shape,device='cuda')
+
         alpha = self.alpha_net(alphaControl)
         beta = self.beta_net(betaControl)
-        d, beta = smooth(d.abs(),smooth_len),smooth(beta.abs(),smooth_len)
+        #d, beta = smooth(d.abs(),smooth_len),smooth(beta.abs(),smooth_len)
         alpha *= self.tau**2
         beta *= self.tau
         d *= self.tau**2
@@ -358,7 +349,7 @@ class arneodobouros(nn.Module):
         z1_3 = z[:,:,:1]**3 
         z2 = z[:,:,1:]
         
-        return alpha,beta,d,torch.cat([alphaControl,betaControl,dControl],dim=-1)
+        return alpha,beta,torch.cat([alphaControl,betaControl],dim=-1)
     
     def visualize(self,x,dt):
 
@@ -394,17 +385,15 @@ class arneodobouros(nn.Module):
         z = torch.cat([x[:,4:-4,:],xdot],dim=-1)
         L = z.shape[1]
 
-        alpha,beta,d,states = self.get_funcs(x[:1,:,:],dt)
-        alpha,beta,d= alpha.detach().cpu().numpy().squeeze(),beta.detach().cpu().numpy().squeeze(),\
-                            d.detach().cpu().numpy().squeeze()
+        alpha,beta,_ = self.get_funcs(x[:1,:,:],dt)
+        alpha,beta= alpha.detach().cpu().numpy().squeeze(),beta.detach().cpu().numpy().squeeze()
         
         start = int(round(st/dt))
-        alpha,beta,d = alpha[start:],beta[start:],d[start:]
+        alpha,beta = alpha[start:],beta[start:]
 
         t_steps = np.arange(0,L*dt+dt/2,dt)[:L][start:]
         alphaTerp = lambda t: np.interp(t,t_steps,alpha)
         betaTerp = lambda t: np.interp(t,t_steps,beta)
-        dTerp = lambda t: np.interp(t,t_steps,d)
         z0 = z[0,start,:]
         z0[-1] /= dt
 
@@ -418,7 +407,6 @@ class arneodobouros(nn.Module):
             
             alpha_step = alphaTerp(t) #alpha[b_ind]
             beta_step = betaTerp(t) # beta[b_ind] 
-            d_step = dTerp(t) #d[b_ind]
             
             z1 = z[:1]
             
@@ -426,7 +414,7 @@ class arneodobouros(nn.Module):
             z1_3 = z[:1]**3  
             z2 = z[1:] 
     
-            dz2 = alpha_step + np.abs(beta_step)**2 *z1 + z1_2 *tau**2 - z1_3*tau**2 - z1 * z2*tau - z1_2 * z2*tau - d_step 
+            dz2 = alpha_step + np.abs(beta_step)**2 *z1 + z1_2 *tau**2 - z1_3*tau**2 - z1 * z2*tau - z1_2 * z2*tau 
 
             dz1 = z[1]
             
