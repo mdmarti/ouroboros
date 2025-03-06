@@ -14,7 +14,7 @@ class aud_neur_ds(Dataset):
 
     def __len__(self):
 
-        return self.data.shape[0]
+        return self.x.shape[0]
 
     def __getitem__(self, idx):
 
