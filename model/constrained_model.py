@@ -273,26 +273,20 @@ class arneodobouros(nn.Module):
         super(arneodobouros,self).__init__()
 
         self.device=device
-        alphaConfig = MambaConfig(d_model=4*d_data,\
+        alphaConfig = MambaConfig(d_model=2*d_data,\
                                     n_layers=n_layers,d_state=d_state,\
                                     d_conv=d_conv,expand_factor=expand_factor)
-        betaConfig = MambaConfig(d_model=4*d_data,\
+        betaConfig = MambaConfig(d_model=2*d_data,\
                                     n_layers=n_layers,d_state=d_state,\
                                     d_conv=d_conv,expand_factor=expand_factor)
-        dConfig = MambaConfig(d_model=4*d_data,\
-                                    n_layers=n_layers,d_state=d_state,\
-                                    d_conv=d_conv,expand_factor=expand_factor)
+
         
         self.alphaMamba = Mamba(alphaConfig).to(device)
         self.betaMamba = Mamba(betaConfig).to(device)
-        self.dMamba = Mamba(dConfig).to(device)
 
         self.alpha_net = nn.Linear(in_features=4*d_data,out_features=d_data,device=device) #unconstrained
         self.beta_net = nn.Linear(in_features=4*d_data,out_features=d_data,device=device) # output unconstrained, but weights nonneg
-        #self.b = nn.Parameter(torch.zeros(1),requires_grad=True).to(device) #non-neg
-        self.d_net = nn.Linear(in_features=4*d_data,out_features=d_data,device=device) #non-neg
 
-        tau = nn.Parameter(torch.tensor([tau],dtype=torch.float64,device=device), requires_grad=True)
         self.tau = tau
         self.smooth_len = smooth_len
         self.noInput = noInput
@@ -310,15 +304,11 @@ class arneodobouros(nn.Module):
         # dx: dx_4dt,dx_5dt,dx_6dt,..., dx_(L-4)dt
         z = torch.cat([x[:,4:-4,:],xdot],dim=-1)
         L = z.shape[1]
-        x_in = torch.cat([z, torch.flip(z,[1])],dim=-1)
+        x_in = torch.cat([z, torch.flip(z,[1])],dim=1)
         
         alphaControl = self.alphaMamba(x_in)
         betaControl = self.betaMamba(x_in)
-        dControl = self.dMamba(x_in)
 
-        #dControl,betaControl = smooth(dControl.abs(),smooth_len),smooth(betaControl.abs(),smooth_len)
-
-        d = self.d_net(dControl)
         if self.noInput:
             d = torch.zeros(d.shape,device='cuda')
         alpha = self.alpha_net(alphaControl)
