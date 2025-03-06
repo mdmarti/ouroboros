@@ -79,18 +79,19 @@ def train(model,optimizer,loss_fn,loaders,filter=None,scheduler=None,
         for idx,batch in enumerate(loaders['train'],start=epoch*len(loaders['train'])):
 
             optimizer.zero_grad()
-            x,y = batch # each is bsz x seq len x n neurons + 1
+            x,dy,dy2 = batch # each is bsz x seq len x n neurons + 1
             bsz,_,n = x.shape
 
             x = x.to('cuda').to(torch.float32)
-            y = y.to('cuda').to(torch.float32)
+            dy = dy.to('cuda').to(torch.float32)
+            dy2 = dy2.to('cuda').to(torch.float32)/(dt**2)
 
-            dy = deriv_approx_dy(x)
+            #dy = deriv_approx_dy(x)
             # dy_4dt, dy_3dt, ...., dy_(L-4)dt
             #change: scaling to "true" d2y
-            dy2 = deriv_approx_d2y(x)
+            #dy2 = deriv_approx_d2y(x)
             # d2y_4dt, d2y_5dt, ..., d2y_(L-4)dt            
-            dy2 = spline_approx_signal(dy2,dt)/(dt**2)
+            #dy2 = spline_approx_signal(dy2,dt)/(dt**2)
             y2hat,state_pred,trend_penalty = model(x,dt,use_trend_filtering=use_trend_filtering,trend_level=trend_level) #state: B x L x SD
             
             # change: scaling to "true" d2y
@@ -167,14 +168,15 @@ def train(model,optimizer,loss_fn,loaders,filter=None,scheduler=None,
             vn = 0.
             for idx,batch in enumerate(loaders['val'],start=epoch*len(loaders['train'])):
                 with torch.no_grad():
-                    x,y = batch
+                    x,dy,dy2 = batch
                     x = x.to('cuda').to(torch.float32)
-                    y = y.to('cuda').to(torch.float32)
+                    dy = dy.to('cuda').to(torch.float32)
+                    dy2 = dy2.to('cuda').to(torch.float32)/(dt**2)
                     
-                    dy = deriv_approx_dy(y)
+                    #dy = deriv_approx_dy(y)
                     # dy_4dt, dy_3dt, ...., dy_(L-4)dt
                     #scaling to "true" d2y
-                    dy2 = deriv_approx_d2y(y)/(dt**2)
+                    #dy2 = deriv_approx_d2y(y)/(dt**2)
                     # d2y_4dt, d2y_5dt, ..., d2y_(L-4)dt            
                     
                     y2hat,state_pred,penalty = model(x,dt,use_trend_filtering=use_trend_filtering,trend_level=trend_level) #state: B x L x SD

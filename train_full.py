@@ -37,7 +37,7 @@ def run_model(audio_path,seg_path='', model_path= '',\
         dls = torch.load(loader_path,weights_only=False)
     else:
         print(f'getting dataloaders with seed {seed}')
-        dls = get_loaders(np.vstack(audios),cv = True,train_size=0.6,seed=seed,batch_size=batch_size)
+        dls = get_loaders(np.vstack(audios),dt=1/sr,cv = True,train_size=0.6,seed=seed,batch_size=batch_size,interp_d2y=True)
         if save_loaders:
             print('saving dataloaders...')
             del audios
