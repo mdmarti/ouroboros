@@ -2,7 +2,7 @@ from torch.utils.tensorboard import SummaryWriter
 import torch
 import numpy as np
 from tqdm import tqdm
-from utils import deriv_approx_d2y,deriv_approx_dy,sst,sse,euler_step_k
+from utils import deriv_approx_d2y,deriv_approx_dy,sst,sse,euler_step_k,spline_approx_signal
 import matplotlib.pyplot as plt
 import os
 from model.constrained_model import rkhs_ouroboros
@@ -88,9 +88,9 @@ def train(model,optimizer,loss_fn,loaders,filter=None,scheduler=None,
             dy = deriv_approx_dy(x)
             # dy_4dt, dy_3dt, ...., dy_(L-4)dt
             #change: scaling to "true" d2y
-            dy2 = deriv_approx_d2y(x)/(dt**2)
+            dy2 = deriv_approx_d2y(x)
             # d2y_4dt, d2y_5dt, ..., d2y_(L-4)dt            
-            
+            dy2 = spline_approx_signal(dy2)/(dt**2)
             y2hat,state_pred,trend_penalty = model(x,dt,use_trend_filtering=use_trend_filtering,trend_level=trend_level) #state: B x L x SD
             
             # change: scaling to "true" d2y
