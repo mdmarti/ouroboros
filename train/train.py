@@ -105,7 +105,7 @@ def train(model,optimizer,loss_fn,loaders,filter=None,scheduler=None,
             # y starts as x[1:0]
             y = dy2 #torch.cat([x[:,5:-5],dy[:,2:],dy2[:,2:]],dim=-1)
             L = y.shape[1]
-
+            #print(dy2.shape)
             if vis_freq > 0:
                 if (idx % vis_freq) == 0:
                     sse_sample = sse(yhat[:1,:,:1],y[:1,:,:1])

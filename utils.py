@@ -34,7 +34,7 @@ def spline_approx_signal(y,dt,lam=5):
 
     spline_approx = np.stack(spline_approx,axis=0)
     assert spline_approx.shape == (B,L), print(spline_approx.shape)
-    return from_numpy(spline_approx[:,None,:]).to('cuda').to(torch.float32)
+    return from_numpy(spline_approx[:,:,None]).to('cuda').to(torch.float32)
 
 def sse(yhat,y,reduction='mean'):
     if reduction == 'mean':
