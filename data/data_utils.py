@@ -28,7 +28,7 @@ class aud_neur_ds(Dataset):
 
         return x,dx,dx2
     
-    def _spline_interp_d2y(self,dt,lam=5):
+    def _spline_interp_d2y(self,dt,lam=5.):
 
         self.dx2 = spline_approx_signal(self.dx2,dt,lam,to_torch=False)
 
@@ -56,7 +56,7 @@ def adjusted_euler_integrate(y0,dy,d2y,dt=1):
 
 def get_loaders(data,dt=1/44100,num_workers=4,batch_size=32,\
                 train_size=0.8,cv = False,seed=None,\
-                interp_d2y=False):
+                interp_d2y=False,lam=1e-5):
 
     dls = {}
     
@@ -70,15 +70,15 @@ def get_loaders(data,dt=1/44100,num_workers=4,batch_size=32,\
         dsVal = aud_neur_ds(X_val)
         if interp_d2y:
             print('interpolating validation 2nd derivs...')
-            dsVal._spline_interp_d2y(dt)
+            dsVal._spline_interp_d2y(dt,lam=lam)
             print('done!!')
         dls['val'] = DataLoader(dsVal,num_workers=num_workers,batch_size=batch_size,shuffle=False)
     dsTrain,dsTest = aud_neur_ds(X_train),aud_neur_ds(X_test)
     if interp_d2y:
         print('interpolating second derivs for train set...')
-        dsTrain._spline_interp_d2y(dt)
+        dsTrain._spline_interp_d2y(dt,lam=lam)
         print('interpolating second derivs for test set....')
-        dsTest._spline_interp_d2y(dt)
+        dsTest._spline_interp_d2y(dt,lam=lam)
         print('done!')
     dls['train'] = DataLoader(dsTrain,num_workers=num_workers,batch_size=batch_size,shuffle=True)
     dls['test'] = DataLoader(dsTest,num_workers=num_workers,batch_size=batch_size,shuffle=False)

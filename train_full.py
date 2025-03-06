@@ -1,5 +1,6 @@
 from data.real_data import *
 from data.data_utils import get_loaders
+from utils import sse
 from train.train import train,save_model,load_model
 from model.constrained_model import rkhs_ouroboros
 from model.kernels import *
@@ -73,8 +74,8 @@ def run_model(audio_path,seg_path='', model_path= '',\
         opt.load_state_dict(state['opt'])
     else:
 
-
-        tl,vl,model,opt = train(model,opt,loss_fn=torch.nn.MSELoss(),loaders=dls,scheduler=scheduler,nEpochs=nEpochs,val_freq=1,\
+        loss_fn = lambda y,yhat: sse(yhat,y,reduction='mean')
+        tl,vl,model,opt = train(model,opt,loss_fn=loss_fn,loaders=dls,scheduler=scheduler,nEpochs=nEpochs,val_freq=1,\
                         runDir=model_path_full,\
                         dt = 1/sr,use_trend_filtering=use_trend,trend_level=trend_level,vis_freq=vis_freq,\
                             alpha=alpha)
