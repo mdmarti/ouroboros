@@ -90,7 +90,7 @@ def train(model,optimizer,loss_fn,loaders,filter=None,scheduler=None,
             #change: scaling to "true" d2y
             dy2 = deriv_approx_d2y(x)
             # d2y_4dt, d2y_5dt, ..., d2y_(L-4)dt            
-            dy2 = spline_approx_signal(dy2)/(dt**2)
+            dy2 = spline_approx_signal(dy2,dt)/(dt**2)
             y2hat,state_pred,trend_penalty = model(x,dt,use_trend_filtering=use_trend_filtering,trend_level=trend_level) #state: B x L x SD
             
             # change: scaling to "true" d2y
