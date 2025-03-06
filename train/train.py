@@ -293,10 +293,8 @@ def train_ksteps(model,filter,optimizer,loaders,scheduler=None,
             
             (y_target,dy_target),(yhat,dyhat) = euler_step_k(y,dy,y2hat,dt,k=ksteps) #dy + y2hat*dt # makes dy [5:-3], corresponding to x[5:-3]
             #print(yhat.shape)
-            yhats = []
-            for yh in yhat:
-                yhats.append(filter(yh.transpose(0,1)).squeeze().transpose(0,1))
-            yhat = torch.stack(yhats,axis=0)#torch.vmap(filter,in_dims=-1,out_dims=-1)(yhat)
+            yhat = torch.vmap(filter,in_dims=-1,out_dims=-1)(yhat)
+            #torch.vmap(filter,in_dims=-1,out_dims=-1)(yhat)
             #yhat = x[:,5:-3] + y1hat *dt # makes corresponding to x[6:-2]
             
             #yhat = torch.cat([yhat[:,:-2],y1hat[:,1:-1],y2hat[:,2:]],dim=-1) #points 6:-4
@@ -367,10 +365,8 @@ def train_ksteps(model,filter,optimizer,loaders,scheduler=None,
                     y2hat = y2hat * model.tau **2 #(model.tau*dt)**2
                     
                     (y_target,dy_target),(yhat,dyhat) = euler_step_k(y,dy,y2hat,dt,k=ksteps)
-                    yhats = []
-                    for yh in yhat:
-                        yhats.append(filter(yh.transpose(0,1)).squeeze().transpose(0,1))
-                    yhat = torch.stack(yhats,axis=0)
+                    yhat = torch.vmap(filter,in_dims=-1,out_dims=-1)(yhat)
+
                     #yhat = torch.cat([yhat[:,:-2],y1hat[:,1:-1],y2hat[:,2:]],dim=-1) #points 6:-4
                     #print(yhat.shape)
                     # y starts as x[1:0]

@@ -20,6 +20,22 @@ def deriv_approx_d2y(y):
     return (-9 * y[:,:-8,:] + 128*y[:,1:-7,:] -1008*y[:,2:-6,:] + 8064*y[:,3:-5,:]- 14350*y[:,4:-4,:] + \
             8064*y[:,5:-3,:] - 1008*y[:,6:-2,:] + 128* y[:,7:-1,:] - 9*y[:,8:,:])/5040
 
+from scipy.interpolate import make_smoothing_spline
+def spline_approx_signal(y,dt,lam=5):
+
+    spline_approx = []
+    B,L,_ = y.shape
+    t = np.arange(0,L*dt +dt/2,dt)[:L]
+    for sample in y:
+
+        sample = sample.detach().cpu().numpy().squeeze()
+        spl = make_smoothing_spline(t,sample,lam=lam)
+        spline_approx.append(spl(t))
+
+    spline_approx = np.stack(spline_approx,axis=0)
+    assert spline_approx.shape == (B,L), print(spline_approx.shape)
+    return from_numpy(spline_approx[:,None,:]).to('cuda').to(torch.float32)
+
 def sse(yhat,y,reduction='mean'):
     if reduction == 'mean':
         return ((yhat - y)**2).sum(dim=1).mean()
