@@ -18,7 +18,7 @@ def run_model(audio_path,seg_path='', model_path= '',\
                 context_len=0.3,max_pairs=1000,trend_level=1,
                 nEpochs=100, kernel_type='gauss',n_kernels=10,alpha=1e7,seed=None,\
                     save_loaders=False,smooth_len=0.005,vis_freq=0,batch_size=32,
-                    smooth_d2y=False,lam=1e-5,tau=1000):
+                    smooth_y=False,lam=1e-5,tau=1000):
 
     
     use_trend = True if trend_level > 0 else False
@@ -39,7 +39,7 @@ def run_model(audio_path,seg_path='', model_path= '',\
         dls = torch.load(loader_path,weights_only=False)
     else:
         print(f'getting dataloaders with seed {seed}')
-        smooth_str = '' if smooth_d2y else ' NOT'
+        smooth_str = '' if smooth_y else ' NOT'
         print(f'we are{smooth_str} smoothing with lam = {lam}')
         dls = get_loaders(np.vstack(audios),dt=1/sr,cv = True,train_size=0.6,seed=seed,batch_size=batch_size,interp_y=smooth_y,lam=lam)
         if save_loaders:
