@@ -21,11 +21,12 @@ def deriv_approx_d2y(y):
             8064*y[:,5:-3,:] - 1008*y[:,6:-2,:] + 128* y[:,7:-1,:] - 9*y[:,8:,:])/5040
 
 from scipy.interpolate import make_smoothing_spline
-def spline_approx_signal(y,dt,lam=5,to_torch=True):
+def spline_approx_signal(y,dt,lam=5,to_torch=True,upsample_prop=1):
 
     spline_approx = []
     B,L,_ = y.shape
-    t = np.arange(0,L*dt +dt/2,dt)[:L]
+    t_true = np.arange(0,L*dt +dt/2,dt)[:L]
+    t_new = np.arange(0,L*dt +dt/2,dt/upsample_prop)[:L*upsample_prop]
     try:
         y = y.detach().cpu().numpy().squeeze()
     except:
@@ -33,11 +34,11 @@ def spline_approx_signal(y,dt,lam=5,to_torch=True):
 
     for sample in y:
 
-        spl = make_smoothing_spline(t,sample,lam=lam)
-        spline_approx.append(spl(t))
+        spl = make_smoothing_spline(t_true,sample,lam=lam)
+        spline_approx.append(spl(t_new))
 
     spline_approx = np.stack(spline_approx,axis=0)
-    assert spline_approx.shape == (B,L), print(spline_approx.shape)
+    assert spline_approx.shape == (B,L*upsample_prop), print(spline_approx.shape)
     if to_torch:
         return from_numpy(spline_approx[:,:,None]).to('cuda').to(torch.float32)
     else:
