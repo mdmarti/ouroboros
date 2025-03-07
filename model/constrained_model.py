@@ -582,7 +582,7 @@ class rkhs_ouroboros(nn.Module):
         gammaControl = self.gamma_mamba(x_in)[:,L:,:]
         kernelControl = self.kernel_mamba(x_in)[:,L:,:]
 
-        omega = self.omega_net(omegaControl).abs() # let's try rectifying here
+        omega = self.omega_net(omegaControl) # let's try rectifying here new change: un-rectifying
         gamma = self.gamma_net(gammaControl)/self.tau # oops
         weighted_kernels,weights = self.kernel(z,kernelControl,smooth_len)
         weighted_kernels /= self.tau
