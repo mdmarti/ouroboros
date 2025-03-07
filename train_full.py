@@ -17,7 +17,8 @@ def run_model(audio_path,seg_path='', model_path= '',\
               seg_filetype='.txt',audio_filetype='.wav',voctype='adultsong',\
                 context_len=0.3,max_pairs=1000,trend_level=1,
                 nEpochs=100, kernel_type='gauss',n_kernels=10,alpha=1e7,seed=None,\
-                    save_loaders=False,smooth_len=0.005,vis_freq=0,batch_size=32):
+                    save_loaders=False,smooth_len=0.005,vis_freq=0,batch_size=32,
+                    smooth_d2y=False,lam=1e-5,tau=1000):
 
     
     use_trend = True if trend_level > 0 else False
@@ -38,7 +39,9 @@ def run_model(audio_path,seg_path='', model_path= '',\
         dls = torch.load(loader_path,weights_only=False)
     else:
         print(f'getting dataloaders with seed {seed}')
-        dls = get_loaders(np.vstack(audios),dt=1/sr,cv = True,train_size=0.6,seed=seed,batch_size=batch_size,interp_d2y=True)
+        smooth_str = '' if smooth_d2y else ' NOT'
+        print(f'we are{smooth_str} smoothing with lam = {lam}')
+        dls = get_loaders(np.vstack(audios),dt=1/sr,cv = True,train_size=0.6,seed=seed,batch_size=batch_size,interp_d2y=smooth_d2y,lam=lam)
         if save_loaders:
             print('saving dataloaders...')
             del audios
@@ -56,14 +59,14 @@ def run_model(audio_path,seg_path='', model_path= '',\
         kernel = polyModule(nTerms=n_kernels,device='cuda',x_dim=1,z_dim=2,activation = lambda x: x,lam=0.9,trend_filtering=use_trend)
     
     model = rkhs_ouroboros(d_data=1,n_layers=1,d_state=1,\
-                d_conv=4,expand_factor=1,tau=1000,\
+                d_conv=4,expand_factor=1,tau=tau,\
                             smooth_len=smooth_len,kernel=kernel,
                             trend_filtering=use_trend)
     opt = Adam(model.parameters(),
                 lr=1e-3)
     scheduler = ReduceLROnPlateau(opt,factor=0.75,patience=5,min_lr=1e-10)
 
-    model_path_full = model_path + f'/kernelborous_{voctype}_trendfiltering_{trend_level}_alpha_{alpha}_kernel_{kernel_type}_nkernels_{n_kernels}'
+    model_path_full = model_path + f'/kernelborous_{voctype}_trendfiltering_{trend_level}_alpha_{alpha}_kernel_{kernel_type}_nkernels_{n_kernels}_lam_{str(lam)}'
     save_loc = model_path_full + '/checkpoint_100.tar'
 
     if os.path.isfile(save_loc):
