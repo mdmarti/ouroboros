@@ -18,7 +18,7 @@ def run_model(audio_path,seg_path='', model_path= '',\
                 context_len=0.3,max_pairs=1000,trend_level=1,
                 nEpochs=100, kernel_type='gauss',n_kernels=10,alpha=1e7,seed=None,\
                     save_loaders=False,smooth_len=0.005,vis_freq=0,batch_size=32,
-                    smooth_y=False,lam=1e-5,tau=1000):
+                    smooth_y=False,lam=1e-5,tau=1000,upsample_prop=32):
 
     
     use_trend = True if trend_level > 0 else False
@@ -41,13 +41,18 @@ def run_model(audio_path,seg_path='', model_path= '',\
         print(f'getting dataloaders with seed {seed}')
         smooth_str = '' if smooth_y else ' NOT'
         print(f'we are{smooth_str} smoothing with lam = {lam}')
-        dls = get_loaders(np.vstack(audios),dt=1/sr,cv = True,train_size=0.6,seed=seed,batch_size=batch_size,interp_y=smooth_y,lam=lam)
+        dls = get_loaders(np.vstack(audios),dt=1/sr,cv = True,train_size=0.6,\
+                          seed=seed,batch_size=batch_size,interp_y=smooth_y,lam=lam,\
+                            upsample_prop=upsample_prop)
         if save_loaders:
             print('saving dataloaders...')
             del audios
             dls['sr'] = sr
             torch.save(dls,loader_path)
 
+    print(f'pretending data at {sr}Hz actually at {sr*upsample_prop}Hz...')
+    sr = sr*upsample_prop
+    
     #alpha_xaxis = np.arange(len(alphas))
     #n_kernels = [10] #1,2,3
 
