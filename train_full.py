@@ -71,7 +71,7 @@ def run_model(audio_path,seg_path='', model_path= '',\
                 lr=1e-3)
     scheduler = ReduceLROnPlateau(opt,factor=0.75,patience=5,min_lr=1e-10)
 
-    model_path_full = model_path + f'/kernelborous_{voctype}_trendfiltering_{trend_level}_alpha_{alpha}_kernel_{kernel_type}_nkernels_{n_kernels}_lam_{str(lam)}'
+    model_path_full = model_path + f'/kernelborous_{voctype}_dsmooth_{str(lam)}_upsample_{upsample_prop}_alpha_{alpha}_kernel_{kernel_type}_nkernels_{n_kernels}'
     save_loc = model_path_full + '/checkpoint_100.tar'
 
     if os.path.isfile(save_loc):
