@@ -3,6 +3,7 @@ import torch
 import numpy as np
 from sklearn.model_selection import train_test_split
 from utils import deriv_approx_d2y,deriv_approx_dy,spline_approx_signal
+from tqdm import tqdm
 
 class aud_neur_ds(Dataset):
 
@@ -86,3 +87,16 @@ def get_loaders(data,dt=1/44100,num_workers=4,batch_size=32,\
     dls['test'] = DataLoader(dsTest,num_workers=num_workers,batch_size=batch_size,shuffle=False)
 
     return dls
+
+
+def get_integration_loaders(dataLoaders,model,dt,num_workers=4,batch_size=32):
+
+    int_loaders = {}
+
+    for key in dataLoaders.keys():
+
+        tmp_data = dataLoaders[key].dataset.x
+
+        for sample in tqdm(tmp_data):
+
+            integrated_sample = model.integrate(sample)

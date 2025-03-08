@@ -1,9 +1,10 @@
 from data.real_data import *
-from data.data_utils import get_loaders
+from data.data_utils import get_loaders,get_
 from utils import sse
 from train.train import train,save_model,load_model
 from model.constrained_model import rkhs_ouroboros
 from model.kernels import *
+from model.filters import *
 import matplotlib.pyplot as plt
 import gc
 import torch
@@ -17,8 +18,8 @@ def run_model(audio_path,seg_path='', model_path= '',\
               seg_filetype='.txt',audio_filetype='.wav',voctype='adultsong',\
                 context_len=0.3,max_pairs=1000,trend_level=1,
                 nEpochs=100, kernel_type='gauss',n_kernels=10,alpha=1e7,seed=None,\
-                    save_loaders=False,smooth_len=0.005,vis_freq=0,batch_size=32,
-                    smooth_y=False,lam=1e-5,tau=1000,upsample_prop=32):
+                    save_loaders=False,smooth_len=0.005,vis_freq=0,batch_size=32,\
+                        tau=1000):
 
     
     use_trend = True if trend_level > 0 else False
@@ -39,19 +40,14 @@ def run_model(audio_path,seg_path='', model_path= '',\
         dls = torch.load(loader_path,weights_only=False)
     else:
         print(f'getting dataloaders with seed {seed}')
-        smooth_str = '' if smooth_y else ' NOT'
-        print(f'we are{smooth_str} smoothing with lam = {lam}')
         dls = get_loaders(np.vstack(audios),dt=1/sr,cv = True,train_size=0.6,\
-                          seed=seed,batch_size=batch_size,interp_y=smooth_y,lam=lam,\
-                            upsample_prop=upsample_prop)
+                          seed=seed,batch_size=batch_size,interp_y=False,lam=0,\
+                            upsample_prop=1)
         if save_loaders:
             print('saving dataloaders...')
             del audios
             dls['sr'] = sr
             torch.save(dls,loader_path)
-
-    print(f'pretending data at {sr}Hz actually at {sr*upsample_prop}Hz...')
-    sr = sr*upsample_prop
     
     #alpha_xaxis = np.arange(len(alphas))
     #n_kernels = [10] #1,2,3
@@ -71,7 +67,7 @@ def run_model(audio_path,seg_path='', model_path= '',\
                 lr=1e-3)
     scheduler = ReduceLROnPlateau(opt,factor=0.75,patience=5,min_lr=1e-10)
 
-    model_path_full = model_path + f'/kernelborous_{voctype}_dsmooth_{str(lam)}_upsample_{upsample_prop}_alpha_{alpha}_kernel_{kernel_type}_nkernels_{n_kernels}'
+    model_path_full = model_path + f'/kernelborous_{voctype}_kernel_{kernel_type}_nkernels_{n_kernels}_sequential'
     save_loc = model_path_full + '/checkpoint_100.tar'
 
     if os.path.isfile(save_loc):
@@ -98,20 +94,16 @@ def run_model(audio_path,seg_path='', model_path= '',\
 
     (train_coef,test_coef),(train_coef_sd,test_coef_sd) = eval_model_integration(dls,model,dt=1/sr,n_segs=25,st=0)
 
-    
-    tl = np.array(tl)
-    ax = plt.gca()
-    ax.plot(tl[:,0],color='tab:blue',label='train loss')
+    filter_path_full = model_path_full + f'/associated_filter'
+    filter_save_loc = filter_path_full + '/checkpoint_100.tar'
 
-    vl = np.array(vl)
-    ax.plot(vl[:,0],vl[:,1],color='tab:orange',label='val loss')
-    ax.set_title("losses")
-    plt.legend()
-    ax.set_xlabel("gradient updates")
-    ax.set_ylabel("loss (MSE)")
-    plt.savefig(model_path_full + '/train_losses.svg')
-    plt.close()
+    filter_len_s = 0.05
+    filter_len_samples = filter_len_s*sr
+    filter_len_samples = (filter_len_samples //2) * 2 -1
 
+    filt = filter(n_filters=[5,5,5],filter_size=filter_len_samples)
+
+    dls = get_integration_loaders(dls,model,1/sr)
 
     ####### add in train/test error analysis here #######
     ####### maybe save out dataloader so that we can 

@@ -43,6 +43,10 @@ def spline_approx_signal(y,dt,lam=5,to_torch=True,upsample_prop=1):
         return from_numpy(spline_approx[:,:,None]).to('cuda').to(torch.float32)
     else:
         return spline_approx[:,:,None]
+    
+def correct(integrated,data,dt):
+
+    pass 
 
 def sse(yhat,y,reduction='mean'):
     if reduction == 'mean':
