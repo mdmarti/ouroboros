@@ -44,9 +44,19 @@ def spline_approx_signal(y,dt,lam=5,to_torch=True,upsample_prop=1):
     else:
         return spline_approx[:,:,None]
     
-def correct(integrated,data,dt):
+def correct(integration,data,center_rounds=2):
 
-    pass 
+    ### center at zero
+    #print(integration.shape)
+    #print(data.shape)
+    for smooth_round in range(center_rounds):
+        smoothed = smooth(integration,smooth_len=5*(smooth_round + 1),smooth_type='causal')
+        integration -= smoothed
+
+    model_env = smooth(np.abs(integration),smooth_len=20,smooth_type='causal')
+    data_env = smooth(np.abs(data),smooth_len=20,smooth_type='causal')
+    ratio = model_env/data_env 
+    return integration / ratio
 
 def sse(yhat,y,reduction='mean'):
     if reduction == 'mean':
