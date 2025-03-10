@@ -4,6 +4,7 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 from utils import deriv_approx_d2y,deriv_approx_dy,spline_approx_signal
 from tqdm import tqdm
+from model.model_utils import integrate_batched
 
 class aud_neur_ds(Dataset):
 
@@ -109,7 +110,9 @@ def get_loaders(data,dt=1/44100,num_workers=4,batch_size=32,\
     return dls
 
 
-def get_integration_loaders(dataLoaders,model,dt,num_workers=4,batch_size=32):
+def get_integration_loaders(dataLoaders,model,dt,batched_integration=True,\
+                            integration_batch_size=256,
+                            num_workers=4,dl_batch_size=32):
 
     int_loaders = {}
 
@@ -118,19 +121,30 @@ def get_integration_loaders(dataLoaders,model,dt,num_workers=4,batch_size=32):
         tmp_data = dataLoaders[key].dataset.x
 
         int_data = []
-        for sample in tqdm(tmp_data,desc=f'Integrating samples for {key} set',total=len(tmp_data)):
+        if batched_integration:
+            total_data = tmp_data.shape[0]
+            for batch_on in tqdm(np.arange(0,total_data,integration_batch_size),desc=f'Integrating samples for {key} set'):
+                batch_off = min(batch_on+integration_batch_size,total_data)
+                model.trend_filtering=True
+                out,*_ = integrate_batched(model,\
+                            torch.from_numpy(tmp_data[batch_on:batch_off,:,:]).to(model.device).to(torch.float32),\
+                            dt=dt,st=0,method='rk4',int_length=1,options=dict(step_size=dt/4),smooth_len=0.01)
+                int_data.append(out.detach().cpu().numpy().squeeze())
 
-            sample = sample[None,:,:].to(model.device).to(torch.float32)
-            integrated_sample,*_ = model.integrate(sample,\
-                                                   dt,st=0.)
-            int_data.append(integrated_sample[0,:][None,:,None])
+        else:
+            for sample in tqdm(tmp_data,desc=f'Integrating samples for {key} set',total=len(tmp_data)):
+
+                sample = sample[None,:,:].to(model.device).to(torch.float32)
+                integrated_sample,*_ = model.integrate(sample,\
+                                                    dt,st=0.)
+                int_data.append(integrated_sample[0,:][None,:,None])
         int_data = np.concatenate(int_data,axis=0)
 
-        ds = int_real_ds(int_data,tmp_data)
+        ds = int_real_ds(int_data,tmp_data[:,4:-4,:])
         if key == 'train':
             shuffle=True
         else:
             shuffle = False
-        int_loaders[key] = DataLoader(ds,num_workers=num_workers,batch_size=batch_size,shuffle=shuffle)
+        int_loaders[key] = DataLoader(ds,num_workers=num_workers,batch_size=dl_batch_size,shuffle=shuffle)
 
     return int_loaders
