@@ -667,7 +667,9 @@ class rkhs_ouroboros(nn.Module):
 
         return
     
-    def integrate(self,x,dt,method='RK45',st=0.05,scaled=True,with_residual=False):
+    def integrate(self,x,dt,method='RK45',st=0.05,scaled=True,\
+                  with_residual=False,correct=True,int_length=0.05,
+                  strategy='interpolate'):
 
         smooth_len = int(round(self.smooth_len/dt))
         B,_,D = x.shape
@@ -678,6 +680,8 @@ class rkhs_ouroboros(nn.Module):
 
         z = torch.cat([x[:,4:-4,:],xdot],dim=-1)
         L = z.shape[1]
+
+        ############## gather functions ##################
 
         #if L > int(round(1/dt)):
         #    yhat,omega,gamma,weights,weighted_kernels = self.funcs_by_step(z,dt,scaled=scaled)
@@ -690,8 +694,6 @@ class rkhs_ouroboros(nn.Module):
         residual = xddot - yhat 
         smoothed_residual = smooth(residual,smooth_len).detach().cpu().numpy().squeeze()
 
-        
-        
         start = int(round(st/dt))
         omega,gamma,weighted_kernels,smoothed_residual = omega[start:],gamma[start:],weighted_kernels[start:],smoothed_residual[start:]
 
@@ -701,26 +703,31 @@ class rkhs_ouroboros(nn.Module):
         weighted_kernelsTerp = lambda t: np.interp(t,t_steps,weighted_kernels)
         if with_residual:
             residTerp = lambda t: np.interp(t,t_steps,smoothed_residual)
+        z[:,:,-1]/=dt
         z0 = z[0,start,:]
-        z0[-1] /= dt
 
-        #tau = self.tau#.detach().cpu().numpy()
+        max_len = (L -1 ) - (start )
 
+        #### define system of ODEs ###############
         def dz(t,z):
 
             # t: time, should have a timestep of roughly dt. treat as ZOH
             # z: B x 2d
-            b_ind = int(t/dt)
+            b_ind = min(int(t/dt),max_len)
             
-            omega_step = omegaTerp(t) 
-            gamma_step = gammaTerp(t) 
-            weighted_kernels_step = weighted_kernelsTerp(t) 
+            if strategy == 'interpolate':
+                omega_step = omegaTerp(t) 
+                gamma_step = gammaTerp(t) 
+                weighted_kernels_step = weighted_kernelsTerp(t) 
+            else:
+                omega_step = omegaTerp(t) 
+                gamma_step = gammaTerp(t) 
+                weighted_kernels_step = weighted_kernelsTerp(t) 
 
             z1 = z[:1]
             
             z2 = z[1:] 
     
-            #-(omega**2)*z1 - gamma * z2 - weighted_kernels
             dz2 = -(omega_step**2)*z1 - gamma_step * z2 - weighted_kernels_step
             dz1 = z[1]
             if with_residual:
@@ -729,12 +736,31 @@ class rkhs_ouroboros(nn.Module):
             
             return np.hstack([dz1,dz2])
         
-        s = time.time()
-        obj = solve_ivp(dz,(st,L*dt),z0.squeeze().detach().cpu().numpy(),t_eval=t_steps,method=method,atol=1e-5)
-        #print(f'integrated in {np.round(time.time() - s,2)} s')
+        z0 = z0.detach().cpu().numpy().squeeze()
+        z = z.detach().cpu().numpy().squeeze().T
+
+        #### integrate, over small chunk, then correct ############
+        int_output = []
+        for t in np.arange(st,L*dt,int_length):
+            bounds = (t,min(t+int_length,L*dt))
+            bounds_samples = (int(round(bounds[0]/dt)),int(round(bounds[1]/dt)))
+            int_length_samples = bounds_samples[1] - bounds_samples[0]
+            t_eval = np.arange(t,t+int_length + dt/2,dt)[:int_length_samples]
+            obj = solve_ivp(dz,bounds,z0,t_eval=t_eval,method=method,atol=1e-8)
+            
+            if correct:
+                corrected_y = correct(obj.y,z[:,bounds_samples[0]:bounds_samples[1]])
+            else:
+                corrected_y = obj.y
+
+            int_output.append(corrected_y)
+            z0 = int_output[-1][:,-1]
+        
+        int_output = np.hstack(int_output)
+        
         if with_residual:
-            return obj.y,omega,gamma,weighted_kernels,smoothed_residual,obj.status
-        return obj.y,omega,gamma,weighted_kernels,obj.status
+            return int_output,omega,gamma,weighted_kernels,smoothed_residual,obj.status
+        return int_output,omega,gamma,weighted_kernels,obj.status
     
     def funcs_by_step(self,z,dt,scaled=True):
 
