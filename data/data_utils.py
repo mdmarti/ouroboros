@@ -23,9 +23,9 @@ class aud_neur_ds(Dataset):
         dx = self.dx[idx]
         dx2 = self.dx2[idx]
         
-        x = torch.from_numpy(x).type(torch.float32)
-        dx = torch.from_numpy(dx).type(torch.float32)
-        dx2 = torch.from_numpy(dx2).type(torch.float32)
+        x = torch.from_numpy(x).to(torch.float32)
+        dx = torch.from_numpy(dx).to(torch.float32)
+        dx2 = torch.from_numpy(dx2).to(torch.float32)
 
         return x,dx,dx2
     
@@ -34,6 +34,26 @@ class aud_neur_ds(Dataset):
         self.x = spline_approx_signal(self.x,dt,lam,to_torch=False,upsample_prop=upsample_prop)
         self.dx = deriv_approx_dy(self.x)
         self.dx2 = deriv_approx_d2y(self.x)
+
+class int_real_ds(Dataset):
+
+    def __init__(self,integrated,real):
+        self.int = integrated
+        self.real = real
+        assert len(self.int) == len(self.real), print(f"Error: integrated data only has {len(self.int)} samples, while real data has {len(self.real)}!!")
+
+    def __len__(self):
+
+        return self.int.shape[0]
+
+    def __getitem__(self, index):
+        
+        integrated,real = self.int[index],self.real[index]
+
+        integrated = torch.from_numpy(integrated).to(torch.float32)
+        real = torch.from_numpy(real).to(torch.float32)
+
+        return integrated,real
 
 def time_stretch(data,true_dt,fake_dt):
 
@@ -97,6 +117,20 @@ def get_integration_loaders(dataLoaders,model,dt,num_workers=4,batch_size=32):
 
         tmp_data = dataLoaders[key].dataset.x
 
-        for sample in tqdm(tmp_data):
+        int_data = []
+        for sample in tqdm(tmp_data,desc=f'Integrating samples for {key} set',total=len(tmp_data)):
 
-            integrated_sample = model.integrate(sample)
+            sample = sample[None,:,:].to(model.device).to(torch.float32)
+            integrated_sample,*_ = model.integrate(sample,\
+                                                   dt,st=0.)
+            int_data.append(integrated_sample[0,:][None,:,None])
+        int_data = np.concatenate(int_data,axis=0)
+
+        ds = int_real_ds(int_data,tmp_data)
+        if key == 'train':
+            shuffle=True
+        else:
+            shuffle = False
+        int_loaders[key] = DataLoader(ds,num_workers=num_workers,batch_size=batch_size,shuffle=shuffle)
+
+    return int_loaders

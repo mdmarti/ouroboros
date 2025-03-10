@@ -2,7 +2,7 @@ import torch
 from torch import nn
 from mambapy.mamba import Mamba, MambaConfig
 from model.model_utils import smooth, NonNegClipper
-from utils import deriv_approx_dy,deriv_approx_d2y
+from utils import deriv_approx_dy,deriv_approx_d2y,correct
 from model.kernels import *
 
 from scipy.integrate import solve_ivp
@@ -668,7 +668,7 @@ class rkhs_ouroboros(nn.Module):
         return
     
     def integrate(self,x,dt,method='RK45',st=0.05,scaled=True,\
-                  with_residual=False,correct=True,int_length=0.05,
+                  with_residual=False,correct_signal=True,int_length=0.05,
                   strategy='interpolate'):
 
         smooth_len = int(round(self.smooth_len/dt))
@@ -720,9 +720,9 @@ class rkhs_ouroboros(nn.Module):
                 gamma_step = gammaTerp(t) 
                 weighted_kernels_step = weighted_kernelsTerp(t) 
             else:
-                omega_step = omegaTerp(t) 
-                gamma_step = gammaTerp(t) 
-                weighted_kernels_step = weighted_kernelsTerp(t) 
+                omega_step = omega[b_ind] 
+                gamma_step = gammaTerp[b_ind] 
+                weighted_kernels_step = weighted_kernelsTerp[b_ind] 
 
             z1 = z[:1]
             
@@ -748,7 +748,7 @@ class rkhs_ouroboros(nn.Module):
             t_eval = np.arange(t,t+int_length + dt/2,dt)[:int_length_samples]
             obj = solve_ivp(dz,bounds,z0,t_eval=t_eval,method=method,atol=1e-8)
             
-            if correct:
+            if correct_signal:
                 corrected_y = correct(obj.y,z[:,bounds_samples[0]:bounds_samples[1]])
             else:
                 corrected_y = obj.y
