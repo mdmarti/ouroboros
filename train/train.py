@@ -59,6 +59,12 @@ def load_model(location,kernel_type='gauss'):
     opt.load_state_dict(sd['opt'])
     return model,opt,scheduler
 
+def train_filter(model,optimizer,loss_fn,loaders,scheduler=None,\
+                 nEpochs=100,val_freq=25,runDir='.',vis_freq=100):
+    
+    print('training filter')
+    
+
 
 def train(model,optimizer,loss_fn,loaders,filter=None,scheduler=None,
           nEpochs=100,val_freq=25,mask_prob_aud = 0.1,

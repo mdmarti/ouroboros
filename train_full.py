@@ -1,5 +1,5 @@
 from data.real_data import *
-from data.data_utils import get_loaders,get_
+from data.data_utils import get_loaders,get_integration_loaders
 from utils import sse
 from train.train import train,save_model,load_model
 from model.constrained_model import rkhs_ouroboros
