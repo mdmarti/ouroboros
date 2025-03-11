@@ -6,7 +6,7 @@ def calc_padding_size(filter_size):
     return filter_size//2
 
 
-class filter(nn.Module):
+class Filter(nn.Module):
 
     def __init__(self,n_filters=4,filter_size=255,device='cuda'):
 

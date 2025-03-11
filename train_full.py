@@ -1,7 +1,7 @@
 from data.real_data import *
 from data.data_utils import get_loaders,get_integration_loaders
 from utils import sse
-from train.train import train,save_model,load_model
+from train.train import train,save_model,load_model,train_filter,save_filter
 from model.constrained_model import rkhs_ouroboros
 from model.kernels import *
 from model.filters import *
@@ -95,19 +95,24 @@ def run_model(audio_path,seg_path='', model_path= '',\
     (train_coef,test_coef),(train_coef_sd,test_coef_sd) = eval_model_integration(dls,model,dt=1/sr,n_segs=25,st=0)
 
     filter_path_full = model_path_full + f'/associated_filter'
+    if not os.path.isdir(filter_path_full):
+        os.mkdir(filter_path_full)
     filter_save_loc = filter_path_full + '/checkpoint_100.tar'
 
     filter_len_s = 0.05
     filter_len_samples = filter_len_s*sr
     filter_len_samples = (filter_len_samples //2) * 2 -1
-
-    filt = filter(n_filters=[5,5,5],filter_size=filter_len_samples)
+    n_filters = [5,5,5]
+    filt = filter(n_filters=n_filters,filter_size=filter_len_samples)
+    filt_opt = Adam(filt.parameters(),lr=1e-3)
 
     dls = get_integration_loaders(dls,model,1/sr)
 
-    ####### add in train/test error analysis here #######
-    ####### maybe save out dataloader so that we can 
-    ####### maintain same train/test split after training run -- that's a good idea actually, save in model path
+    tl1,vl1,filt,filt_opt = train_filter(filt,filt_opt,loss_fn=loss_fn,\
+                                         loaders=dls,scheduler=scheduler,\
+                                            val_freq=1,vis_freq=vis_freq,run_dir=filter_path_full)
+    
+    save_filter(filt,filter_save_loc,n_filters,filter_len_samples)
 
     return model, dls
 

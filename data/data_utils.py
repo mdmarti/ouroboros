@@ -140,7 +140,7 @@ def get_integration_loaders(dataLoaders,model,dt,batched_integration=True,\
                 int_data.append(integrated_sample[0,:][None,:,None])
         int_data = np.concatenate(int_data,axis=0)
 
-        ds = int_real_ds(int_data,tmp_data[:,4:-4,:])
+        ds = int_real_ds(int_data[:,:,:1],tmp_data[:,4:-4,:])
         if key == 'train':
             shuffle=True
         else:
