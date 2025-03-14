@@ -130,6 +130,9 @@ def get_integration_loaders(dataLoaders,model,dt,batched_integration=True,\
                 out,*_ = integrate_batched(model,\
                             torch.from_numpy(tmp_data[batch_on:batch_off,:,:]).to(model.device).to(torch.float32),\
                             dt=dt,st=0,method='rk4',int_length=int_length,options=dict(step_size=dt/oversample_prop),smooth_len=0.01)
+                number_of_nans = np.sum(torch.isnan(out))
+                print(f"number of nans in batch: {number_of_nans}")
+                out = torch.nan_to_num(out)
                 int_data.append(out.detach().cpu().numpy().squeeze())
 
         else:
