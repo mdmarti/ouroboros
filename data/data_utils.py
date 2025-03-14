@@ -112,7 +112,8 @@ def get_loaders(data,dt=1/44100,num_workers=4,batch_size=32,\
 
 def get_integration_loaders(dataLoaders,model,dt,batched_integration=True,\
                             integration_batch_size=256,
-                            num_workers=4,dl_batch_size=32):
+                            num_workers=4,dl_batch_size=32,\
+                                int_length=0.25,oversample_prop=4):
 
     int_loaders = {}
 
@@ -128,7 +129,7 @@ def get_integration_loaders(dataLoaders,model,dt,batched_integration=True,\
                 model.trend_filtering=True
                 out,*_ = integrate_batched(model,\
                             torch.from_numpy(tmp_data[batch_on:batch_off,:,:]).to(model.device).to(torch.float32),\
-                            dt=dt,st=0,method='rk4',int_length=1,options=dict(step_size=dt/4),smooth_len=0.01)
+                            dt=dt,st=0,method='rk4',int_length=int_length,options=dict(step_size=dt/oversample_prop),smooth_len=0.01)
                 int_data.append(out.detach().cpu().numpy().squeeze())
 
         else:

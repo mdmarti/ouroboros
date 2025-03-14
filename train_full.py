@@ -19,7 +19,7 @@ def run_model(audio_path,seg_path='', model_path= '',\
                 context_len=0.3,max_pairs=1000,trend_level=1,
                 nEpochs=100, kernel_type='gauss',n_kernels=10,alpha=1e7,seed=None,\
                     save_loaders=False,smooth_len=0.005,vis_freq=0,batch_size=32,\
-                        tau=1000):
+                        tau=1000,int_length=0.25,oversample_prop=4):
 
     
     use_trend = True if trend_level > 0 else False
@@ -106,13 +106,15 @@ def run_model(audio_path,seg_path='', model_path= '',\
     filt = filter(n_filters=n_filters,filter_size=filter_len_samples)
     filt_opt = Adam(filt.parameters(),lr=1e-3)
 
-    dls = get_integration_loaders(dls,model,1/sr)
+    dls = get_integration_loaders(dls,model,1/sr,\
+                                  int_length=int_length,\
+                                    oversample_prop=oversample_prop)
 
     tl1,vl1,filt,filt_opt = train_filter(filt,filt_opt,loss_fn=loss_fn,\
                                          loaders=dls,scheduler=scheduler,\
                                             val_freq=1,vis_freq=vis_freq,run_dir=filter_path_full)
-    
     save_filter(filt,filter_save_loc,n_filters,filter_len_samples)
+    loss_plot(tl1,vl1,save_loc=filter_path_full,show=False)
 
     return model, dls
 
