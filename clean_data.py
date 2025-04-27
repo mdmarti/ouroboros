@@ -18,8 +18,13 @@ def preprocess_data(audio_loc,seg_loc,out_ext,\
     seg_dirs = glob.glob(os.path.join(seg_loc,seg_subdirs))
     out_dirs = [os.path.join(o,out_ext) for o in audio_dirs]
 
-    audio_tags = [a.split('/')[-1] for a in audio_dirs]
-    seg_tags = [s.split('/')[-2] for s in seg_dirs]
+    split_aud_sub = audio_subdirs.split('/')
+    split_seg_sub = seg_subdirs.split('/')
+    aud_sub_depth=len(split_aud_sub)
+    seg_sub_depth=len(split_seg_sub)
+
+    audio_tags = [a.split('/')[-aud_sub_depth] for a in audio_dirs]
+    seg_tags = [s.split('/')[-seg_sub_depth] for s in seg_dirs]
     valid = True
     for tag in seg_tags:
         try:
