@@ -12,7 +12,9 @@ import noisereduce as nr
 
 from typing import Union, Tuple
 
-# much of the code in this section comes from ssqueezepy, please check out this
+plt.rcParams
+
+# Synchrosqueezing preprocessing code is based on , please check out this
 # library! it's very good
 
 ### wavelets:
@@ -738,3 +740,4 @@ def preprocess(
         preprocess_helper(
             in_file, out_dir, hp_dict, reprocess, preprocess_type, reduce_noise
         )
+    print(f"done cleaning {len(audio_files)} files in {audio_dir}")
