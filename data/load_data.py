@@ -112,8 +112,13 @@ def get_audio_analysis(
             sr, aud = wavfile.read(a)  # here, we assume
             # all loaded files have the same sample rate
 
-            seg_onoffs = np.loadtxt(s)
+            if aud.dtype == np.int16:  # ints are TOO BIG!! turn into floats
+                aud = aud / -np.iinfo(aud.dtype).min
 
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                seg_onoffs = np.loadtxt(s, usecols=(0, 1))
+            
             if len(seg_onoffs) == 0:
                 continue
             if len(seg_onoffs.shape) == 1:

@@ -171,6 +171,8 @@ def tune_segmenting_params(audio_dirs, p, img_fn="temp.pdf"):
                 p[key] = float(temp)
 
         # Plot segmenting decisions.
+        window_dur = p["window_dur"]
+        window_samples = int(window_dur * p["fs"])
         temp = "not (s or r)"
         iteration = 0
         while temp != "s" and temp != "r":
