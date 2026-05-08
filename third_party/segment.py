@@ -184,6 +184,10 @@ def tune_segmenting_params(audio_dirs, p, img_fn="temp.pdf"):
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=WavFileWarning)
                 fs, audio = wavfile.read(filename)
+            if fs != p['fs']:
+                print("Found fs=" + str(fs) + ", expected " + str(p["fs"]))
+                print("setting fs to found fs")
+                p['fs'] = fs
             assert fs == p["fs"], "Found fs=" + str(fs) + ", expected " + str(p["fs"])
             if len(audio) < 3 * window_samples + 1:
                 temp = len(audio) / p["fs"]
