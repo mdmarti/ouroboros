@@ -33,7 +33,9 @@ dev = ["pytest>=8.0"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-filterwarnings = ["ignore::DeprecationWarning"]
+filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
+markers = ["slow: slow tests (e.g. BioSound features, parallel jobs); run with `pytest -m slow`"]
+addopts = "-m 'not slow'"
 
 [sources]
 torch = [
