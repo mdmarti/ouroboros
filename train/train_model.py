@@ -22,6 +22,7 @@ def train_model(
     batch_size: int = 32,
     n_epochs: int = 100,
     save_freq: int = 5,
+    device: str = "cuda",
 ) -> torch.nn.Module:
     """
     function for training a model. takes audio from
@@ -41,6 +42,7 @@ def train_model(
             batch_size: batch size during training
             n_epochs: max number of passes through the data during training
             save_freq: how often (in epochs) we want to checkpoint model
+            device: device to train on. falls back to cpu if cuda is unavailable
     returns
     --------
             best model after hyperparameter cross-validation
@@ -99,6 +101,7 @@ def train_model(
         tau=dt,
         model_path=model_dir,
         save_freq=save_freq,
+        device=device,
     )
 
     return best_model

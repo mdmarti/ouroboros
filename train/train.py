@@ -12,7 +12,8 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import torch.nn as nn
 
-from typing import Tuple
+from typing import Tuple, Union
+from model.model_utils import resolve_device
 
 # filters removed
 
@@ -75,6 +76,7 @@ def save_model(
 
 def load_model(
     location: str,
+    device: Union[str, torch.device] = "cuda",
 ) -> Tuple[nn.Module, torch.optim.Optimizer, torch.optim.lr_scheduler.LRScheduler, int]:
     """
     load a model. requires that save files contained information about the structure of
@@ -85,6 +87,8 @@ def load_model(
     -----
         - location: save file directory you wish to load from. Assumes files include checkpoint number
             and loads the most recent checkpoint
+        - device: device to load the model onto. falls back to cpu if cuda is requested
+            but unavailable
 
     returns
     -----
@@ -100,7 +104,8 @@ def load_model(
     location = model_files[most_recent]
     print(f"loading from {location}")
 
-    sd = torch.load(location, weights_only=False)
+    device = resolve_device(device)
+    sd = torch.load(location, weights_only=False, map_location=device)
     try:
         n_layers = sd["n_layers"]
         d_state = sd["d_state"]
@@ -116,7 +121,7 @@ def load_model(
         # but probably should have saved it. oh well! we set to 1 for compatibility with all my saves.
         kernel = fullPolyModule(
             nTerms=sd["n_kernel"],
-            device="cuda",
+            device=device,
             x_dim=1,
             z_dim=2,
             activation=lambda x: x,
@@ -132,6 +137,7 @@ def load_model(
             tau=sd["tau"],
             smooth_len=sd["smooth_len"],
             kernel=kernel,
+            device=device,
         )
     except:
         print("no kernel in savefile!")
@@ -210,10 +216,10 @@ def train(
             x, dxdt, dx2dt2 = batch  # each is bsz x seq len x 1
             bsz, _, n = x.shape
 
-            x = x.to("cuda").to(torch.float32)
-            dxdt = dxdt.to("cuda").to(torch.float32)
+            x = x.to(model.device).to(torch.float32)
+            dxdt = dxdt.to(model.device).to(torch.float32)
             dx2 = (
-                dx2dt2.to("cuda").to(torch.float32) / (dt**2) * model.tau**2
+                dx2dt2.to(model.device).to(torch.float32) / (dt**2) * model.tau**2
             )  # rescale dx2, rather than model output
 
             dx2hat, weights = model(x, dxdt, dt, smoothing)  # state: B x L x SD
@@ -289,7 +295,7 @@ def train(
 
             train_loss = loss_fn(y, yhat[:, :L, :])
 
-            #l = loss
+            total_loss = train_loss
             if reg_weights:
                 B, L, P, P = weights.shape
                 lam_mat = torch.arange(
@@ -325,9 +331,9 @@ def train(
                     x, dxdt, dx2dt2 = batch  # each is bsz x seq len x 1
                     bsz, _, n = x.shape
 
-                    x = x.to("cuda").to(torch.float32)
-                    dxdt = dxdt.to("cuda").to(torch.float32)
-                    dx2 = dx2dt2.to("cuda").to(torch.float32) / (dt**2) * model.tau**2
+                    x = x.to(model.device).to(torch.float32)
+                    dxdt = dxdt.to(model.device).to(torch.float32)
+                    dx2 = dx2dt2.to(model.device).to(torch.float32) / (dt**2) * model.tau**2
 
                     dx2hat, weights = model(x, dxdt, dt, smoothing)
 
@@ -436,7 +442,7 @@ def train(
             writer.add_scalar("Loss/validation", vl / len(loaders["val"]), idx)
             writer.add_scalar("Penalty/validation", vp / len(loaders["val"]), idx)
 
-            if epoch % save_freq == 0:
+            if save_freq > 0 and epoch % save_freq == 0:
                 save_model(
                     model,
                     optimizer,

@@ -31,6 +31,7 @@ def model_cv_lambdas(
     smooth_len: float = 0.001,
     model_path: str = "",
     save_freq: int = 5,
+    device: str = "cuda",
 ) -> torch.nn.Module:
     """
     This function trains models and cross-validates across regularization strengths.
@@ -54,6 +55,7 @@ def model_cv_lambdas(
         - smooth_len: smoothing length for model functions. not used in training
         - model_path: place to save all the models
         - save_freq: how often to save out our models
+        - device: device to train on. falls back to cpu if cuda is requested but unavailable
 
     returns
     -----
@@ -86,7 +88,7 @@ def model_cv_lambdas(
 
         kernel = fullPolyModule(
             nTerms=n_kernels,
-            device="cuda",
+            device=device,
             x_dim=1,
             z_dim=2,
             activation=lambda x: x,
@@ -102,6 +104,7 @@ def model_cv_lambdas(
             tau=tau,
             smooth_len=smooth_len,
             kernel=kernel,
+            device=device,
         )
 
         full_opt_poly = Adam(full_model_poly.parameters(), lr=lr)
@@ -117,7 +120,7 @@ def model_cv_lambdas(
         start_epoch = 0
         if len(save_files) > 0:
             full_model_poly, full_opt_poly, full_scheduler_poly, start_epoch = (
-                load_model(model_path_full_poly)
+                load_model(model_path_full_poly, device=device)
             )
 
         if start_epoch < n_epochs:
@@ -199,7 +202,7 @@ def model_cv_lambdas(
         model_path + f"/kernelborous_poly_end_to_end_lambda_{lambdas[min_err_ind]}"
     )
 
-    full_model_poly, full_opt_poly, full_scheduler_poly, _ = load_model(model_path_best)
+    full_model_poly, full_opt_poly, full_scheduler_poly, _ = load_model(model_path_best, device=device)
     full_model_poly.eval()
     with torch.no_grad():
         (train_mu, test_mu), (train_sd, test_sd), (train_r2, test_r2) = (

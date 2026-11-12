@@ -2,7 +2,7 @@ import numpy as np
 from abc import abstractmethod
 import torch
 from torch import nn
-from model.model_utils import smooth
+from model.model_utils import smooth, resolve_device
 from typing import Tuple
 
 """
@@ -23,7 +23,7 @@ class kernelModule(nn.Module):
         super().__init__()
 
         self.nTerms = nTerms
-        self.device = device
+        self.device = resolve_device(device)
         self.d = x_dim
         self.n = z_dim
         self.activation = activation
@@ -47,7 +47,7 @@ class fullPolyModule(kernelModule):
     """
 
     nTerms: int  # number of polynomial terms included
-    device: str  # cuda or cpu
+    device: str  # cuda or cpu. falls back to cpu if cuda is requested but unavailable
     x_dim: int  # data dimension
     z_dim: int  # number of inputs
     lam: float  # base regularization weight on polynomial weights
@@ -60,7 +60,12 @@ class fullPolyModule(kernelModule):
         self.poly_dim = nTerms
 
         self.weights = nn.Linear(self.n, (self.poly_dim + 1) ** 2).to(self.device)
-        self.powers = torch.arange(0, self.poly_dim + 1, device=self.device)
+        # a (non-persistent) buffer, so that .to(device) moves it along with the weights
+        self.register_buffer(
+            "powers",
+            torch.arange(0, self.poly_dim + 1, device=self.device),
+            persistent=False,
+        )
         self.lam = lam
 
     def forward(

@@ -1,7 +1,7 @@
 import torch
 from torch import nn
-from mambapy.mamba import Mamba, MambaConfig
-from model.model_utils import smooth
+from third_party.mamba import Mamba, MambaConfig
+from model.model_utils import smooth, resolve_device
 from typing import Tuple, Union
 # from model.kernels import *
 
@@ -32,14 +32,14 @@ class Ouroboros(nn.Module):
         d_state: int = 16,
         d_conv: int = 4,
         expand_factor: int = 1,
-        device: str = "cuda",
+        device: Union[str, torch.device] = "cuda",
         tau: float = 1 / 10000,
         smooth_len: float = 0.001,
     ):
 
         super().__init__()
 
-        self.device = device
+        device = resolve_device(device)
         ## if stacking on data dimension, d should be 4* d_data (y,dy,rev y, rev dy)
         ## if stacking on time dimension, d should be 2*d_data (y,dy). We are stacking on the time dimension.
         omegaConfig = MambaConfig(
@@ -79,9 +79,15 @@ class Ouroboros(nn.Module):
 
         self.tau = tau
         self.smooth_len = smooth_len
-        self.kernel = kernel
+        self.kernel = kernel.to(device)
+        self.kernel.device = device
         self.kernel.tau = self.tau
         self.names = [r"$\omega$", r"$\gamma$", "weighted kernels", "states"]
+
+    @property
+    def device(self) -> torch.device:
+        """device the model currently lives on (stays correct after `.to(...)`)"""
+        return next(self.parameters()).device
 
     def forward(
         self,
@@ -107,9 +113,8 @@ class Ouroboros(nn.Module):
             - weights: kernel weights over whole segment. these are regularized towards simplicity during training
         """
 
-        dxdt *= self.tau  # this is now \tau dxdt
-
-        dxdt /= dt  # this is now \tau dx
+        # scale without modifying the caller's tensor in place
+        dxdt = dxdt * self.tau / dt  # this is now \tau dx
 
         B, L, D = x.shape
 
@@ -180,9 +185,8 @@ class Ouroboros(nn.Module):
 
         B, L, D = x.shape
 
-        ## as in forward
-        dxdt *= self.tau
-        dxdt /= dt
+        ## as in forward (not in place, so the caller's dxdt is left alone)
+        dxdt = dxdt * self.tau / dt
 
         max_len_s = int(round(max_len_t / dt))
 
@@ -260,7 +264,9 @@ class Ouroboros(nn.Module):
     ]:
         """
         if your audio segment is too long, we'll just get these functions step by step
-        rather than all at once. This function assumes you do NOT need to backprop at all. That would probably take forever.
+        rather than all at once. The Mamba encoders carry their state across chunks, so
+        the result matches processing the whole segment at once (up to numerical error).
+        This function assumes you do NOT need to backprop at all. That would probably take forever.
         So I would recommend keeping that as is.
 
         inputs
@@ -272,71 +278,44 @@ class Ouroboros(nn.Module):
 
         returns
         ------
-            - yhat: model estimated second derivative
-            - omegas: instantaneous frequency
-            - gammas: instantaneous damping
-            - kernel: nonlinearity
-            - weights: kernel weights for nonlinearity
+            - yhat: model estimated second derivative, scaled by tau^2 (as in `forward`)
+            - omegas: instantaneous frequency (B x L x 1)
+            - gammas: instantaneous damping (B x L x 1)
+            - kernel: nonlinearity (B x L x 1)
+            - weights: kernel weights for nonlinearity (B x L x P x P)
         """
 
         smooth_len = int(round(self.smooth_len / dt))
-
-        omega_cache = [
-            (
-                None,
-                torch.zeros(
-                    (
-                        1,
-                        self.omega_mamba.config.d_model
-                        * self.omega_mamba.config.expand_factor,
-                        self.omega_mamba.config.d_conv,
-                    ),
-                    device=self.device,
-                ),
-            )
-            for _ in self.omega_mamba.layers
-        ]
-        gamma_cache = [
-            (
-                None,
-                torch.zeros(
-                    (
-                        1,
-                        self.gamma_mamba.config.d_model
-                        * self.gamma_mamba.config.expand_factor,
-                        self.gamma_mamba.config.d_conv,
-                    ),
-                    device=self.device,
-                ),
-            )
-            for _ in self.gamma_mamba.layers
-        ]
-        weights_cache = [
-            (
-                None,
-                torch.zeros(
-                    (
-                        1,
-                        self.kernel_mamba.config.d_model
-                        * self.kernel_mamba.config.expand_factor,
-                        self.kernel_mamba.config.d_conv,
-                    ),
-                    device=self.device,
-                ),
-            )
-            for _ in self.kernel_mamba.layers
-        ]
-
         B, L, D = z.shape
+
+        def init_cache(mamba):
+            # (hidden state, last d_conv - 1 conv inputs) for each layer. a hidden
+            # state of None means "start from zero"
+            cfg = mamba.config
+            return [
+                (
+                    None,
+                    torch.zeros(
+                        (B, cfg.d_inner, cfg.d_conv - 1),
+                        device=z.device,
+                    ),
+                )
+                for _ in mamba.layers
+            ]
+
+        omega_cache = init_cache(self.omega_mamba)
+        gamma_cache = init_cache(self.gamma_mamba)
+        kernel_cache = init_cache(self.kernel_mamba)
+
+        # as in `forward`: time-reversed context, followed by the data
         x_in = torch.cat([torch.flip(z, [1]), z], dim=1)
-        # B,L,D = x_in.shape
         L_new = x_in.shape[1]
 
         omegas, gammas, weights, kernel = [], [], [], []
         with torch.no_grad():
             for ii in tqdm(
                 range(0, L_new, step_size),
-                total=L_new // step_size + 1,
+                total=int(np.ceil(L_new / step_size)),
                 desc=f"iterating through segment of length {L}",
             ):
                 if np.mod(ii, 10000) == 0:
@@ -345,35 +324,41 @@ class Ouroboros(nn.Module):
                 end_ind = min(L_new, ii + step_size)
                 s = x_in[:, ii:end_ind, :]
 
-                omega, omega_cache = self.omega_mamba.step(s, omega_cache)
-                gamma, gamma_cache = self.omega_mamba.step(s, gamma_cache)
-                w, weights_cache = self.omega_mamba.step(s, weights_cache)
+                # each encoder keeps its own state, and has to see the whole input
+                # (including the reversed half), even though we discard the outputs there
+                omega_ctrl, omega_cache = self.omega_mamba.chunk_step(s, omega_cache)
+                gamma_ctrl, gamma_cache = self.gamma_mamba.chunk_step(s, gamma_cache)
+                kernel_ctrl, kernel_cache = self.kernel_mamba.chunk_step(
+                    s, kernel_cache
+                )
 
-                start_ind = max(0, ii - L)
-                s = z[:, start_ind : end_ind - L, :]
-                if end_ind - L > 0:
-                    start_ind = max(0, L - ii)
-                    omega = self.omega_net(omega[:, start_ind:]).abs()
-                    gamma = self.gamma_net(gamma[:, start_ind:])
-                    weights.append(w[:, start_ind:].detach().cpu().numpy().squeeze())
-                    omegas.append(omega.detach().cpu().numpy().squeeze())
-                    gammas.append(gamma.detach().cpu().numpy().squeeze())
-                    weighted_kernels, _ = self.kernel(s, w[:, start_ind:], smooth_len)
-                    kernel.append(weighted_kernels.detach().cpu().numpy().squeeze())
+                if end_ind > L:
+                    # only outputs for the second (forward) half of x_in are kept.
+                    # local_start indexes into this chunk; data_start indexes into z
+                    local_start = max(0, L - ii)
+                    data_start = max(0, ii - L)
+                    data_end = end_ind - L
 
-        z[:, :, 1] /= dt
-        omegas = np.concatenate(omegas)
-        gammas = np.concatenate(gammas)
-        weights = np.concatenate(weights)
-        kernel = np.concatenate(kernel)
+                    omega = self.omega_net(omega_ctrl[:, local_start:]).abs()
+                    gamma = self.gamma_net(gamma_ctrl[:, local_start:])
+                    weighted_kernels, w = self.kernel(
+                        z[:, data_start:data_end, :], kernel_ctrl[:, local_start:]
+                    )
+                    omegas.append(omega)
+                    gammas.append(gamma)
+                    kernel.append(weighted_kernels)
+                    weights.append(w)
 
-        z1 = z[:, :, :1].detach().cpu().numpy().squeeze() / dt
-        z2 = z[:, :, 1:].detach().cpu().numpy().squeeze()
-
-        yhat = -(omegas**2) * z1 - gammas * z2 - kernel
+        omegas = torch.cat(omegas, dim=1)
+        gammas = torch.cat(gammas, dim=1)
+        kernel = torch.cat(kernel, dim=1)
+        weights = torch.cat(weights, dim=1)
 
         if smoothing:
-            omegas = smooth(omegas[None, :, None], smooth_len).squeeze()
-            gammas = smooth(gammas[None, :, None], smooth_len).squeeze()
+            omegas = smooth(omegas.abs(), smooth_len)
+            gammas = smooth(gammas, smooth_len)
+
+        # same form as `forward`
+        yhat = -(omegas**2) * z[:, :, :1] - gammas * z[:, :, 1:] - kernel
 
         return yhat, omegas, gammas, kernel, weights

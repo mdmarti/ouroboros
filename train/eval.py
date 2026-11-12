@@ -8,6 +8,7 @@ from utils import (
     butter_filter,
 )
 from torchdiffeq import odeint_adjoint
+from model.model_utils import resolve_device
 
 from scipy.interpolate import make_interp_spline
 
@@ -77,8 +78,8 @@ def integrate_model_d2(
     audio = audio[None, :, None]
     dy = deriv_approx_dy(audio)
 
-    audio = torch.from_numpy(audio).to(torch.float32).to("cuda")
-    dy = torch.from_numpy(dy).to(torch.float32).to("cuda")
+    audio = torch.from_numpy(audio).to(torch.float32).to(model.device)
+    dy = torch.from_numpy(dy).to(torch.float32).to(model.device)
     ic = torch.hstack([audio[0, 0, 0], dy[0, 0, 0] / dt])
 
     with torch.no_grad():
@@ -135,7 +136,11 @@ def integrate_model_d2(
 
 
 def integrate_estimated_d2(
-    audio: torch.FloatTensor, dt: float, method: str = "rk4", verbose: bool = True
+    audio: torch.FloatTensor,
+    dt: float,
+    method: str = "rk4",
+    verbose: bool = True,
+    device: str = "cuda",
 ) -> np.ndarray:
     """
     comparison integration: estimate second derivative from audio, then integrate
@@ -146,6 +151,7 @@ def integrate_estimated_d2(
         - dt: audio sampling timestep
         - method: integration method
         - verbose: whether to print things
+        - device: device to integrate on (falls back to cpu if cuda is unavailable)
 
     returns
     -----
@@ -160,7 +166,9 @@ def integrate_estimated_d2(
     dy = deriv_approx_dy(audio[None, :, None]).squeeze()
 
     ic = (
-        torch.from_numpy(np.hstack([audio[0], dy[0] / dt])).to(torch.float32).to("cuda")
+        torch.from_numpy(np.hstack([audio[0], dy[0] / dt]))
+        .to(torch.float32)
+        .to(resolve_device(device))
     )
     integrated = integrate_second_deriv(
         yhat, ic, t_steps, method=method, verbose=verbose
@@ -204,7 +212,9 @@ def integrate_second_deriv(
             )
 
         t = t.detach().cpu().numpy()
-        dz2 = torch.from_numpy(np.array([deriv_interp(t)])).to("cuda").to(torch.float32)
+        dz2 = (
+            torch.from_numpy(np.array([deriv_interp(t)])).to(ic.device).to(torch.float32)
+        )
 
         dz1 = z[1]
 
@@ -258,9 +268,9 @@ def eval_model_error(
         with torch.no_grad():
             x, dxdt, dx2dt2 = batch  # each is bsz x seq len x n neurons + 1
 
-            x = x.to("cuda").to(torch.float32)
-            dxdt = dxdt.to("cuda").to(torch.float32)
-            dx2 = dx2dt2.to("cuda").to(torch.float32) / (dt**2)
+            x = x.to(model.device).to(torch.float32)
+            dxdt = dxdt.to(model.device).to(torch.float32)
+            dx2 = dx2dt2.to(model.device).to(torch.float32) / (dt**2)
             dx2hat, state_pred = model(x, dxdt, dt)  # state: B x L x SD
 
             # change: scaling to "true" d2y
@@ -286,9 +296,9 @@ def eval_model_error(
             x, dxdt, dx2dt2 = batch  # each is bsz x seq len x n neurons + 1
             
 
-            x = x.to("cuda").to(torch.float32)
-            dxdt = dxdt.to("cuda").to(torch.float32)
-            dx2 = dx2dt2.to("cuda").to(torch.float32) / (dt**2)
+            x = x.to(model.device).to(torch.float32)
+            dxdt = dxdt.to(model.device).to(torch.float32)
+            dx2 = dx2dt2.to(model.device).to(torch.float32) / (dt**2)
             dx2hat, state_pred = model(x, dxdt, dt)  # state: B x L x SD
 
             # change: scaling to "true" d2y

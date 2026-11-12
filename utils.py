@@ -86,7 +86,8 @@ def euler_step_k(y,dy,d2y,dt,k=1):
 
 def from_numpy(data,device='cuda'):
 
-    return torch.from_numpy(data).to(torch.FloatTensor).to(device)
+    from model.model_utils import resolve_device
+    return torch.from_numpy(data).to(torch.float32).to(resolve_device(device))
 
 def remove_axes(axis):
 

@@ -8,7 +8,6 @@ from matplotlib.animation import FuncAnimation
 # import librosa
 import os
 import matplotlib as mpl
-import analysis.analysis as analysis
 import seaborn as sns
 
 plt.rcParams["text.usetex"] = True

@@ -1,4 +1,38 @@
+import warnings
+from typing import Union
+
 import torch
+
+
+def resolve_device(device: Union[str, torch.device] = "cuda") -> torch.device:
+    """
+    turn a requested device into one that actually exists. If a cuda device is
+    requested but torch.cuda.is_available() is False, warn and fall back to the cpu
+    (so the default of 'cuda' still works on machines without a gpu, just slowly).
+
+    inputs
+    -----
+        - device: a device string or torch.device, e.g. 'cuda', 'cuda:1', 'cpu'
+
+    returns
+    -----
+        - a usable torch.device
+    """
+    device = torch.device(device)
+    if device.type == "cuda":
+        if not torch.cuda.is_available():
+            warnings.warn(
+                "cuda was requested but torch.cuda.is_available() is False; "
+                "falling back to cpu. Pass device='cpu' to silence this warning.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return torch.device("cpu")
+        if device.index is not None and device.index >= torch.cuda.device_count():
+            raise ValueError(
+                f"requested {device}, but only {torch.cuda.device_count()} cuda device(s) found"
+            )
+    return device
 
 
 def smooth(data: torch.FloatTensor, smooth_len: float) -> torch.FloatTensor:
