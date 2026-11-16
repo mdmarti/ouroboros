@@ -18,6 +18,9 @@ two nulls:
 
     - "local null": regressors are spike trains shuffled in time within each neuron/vocalization
     - "global null": real regressors, but the targets are shuffled across time points
+    - "circular null": real regressors, but each vocalization's target is circularly shifted in time by a
+      random lag (fresh lags every run). This keeps the target's autocorrelation, and only breaks its
+      alignment with the spikes; the other nulls destroy the temporal structure of the spikes / targets
 
 All regressors use the same spike designs and the same cross-validation folds, so their R^2s are directly
 comparable. Targets are smoothed with the same Gaussian (`--spike-smooth`).
@@ -77,7 +80,8 @@ from analysis_scripts.common import format_axis, load_best_model, plt, resolve_m
 from utils import deriv_approx_dy
 
 SPIKE_BIN_SIZE = 0.001
-CONDITIONS = ["real", "local null", "global null"]
+CONDITIONS = ["real", "local null", "global null", "circular null"]
+
 
 
 # ------------------------------------------------------------------ data
@@ -254,6 +258,7 @@ def run(
     split_by="timepoint",
     n_vocs_vis=3,
     max_len_t=4,
+    min_shift_frac=0.1,
     device="cuda",
 ):
     """
@@ -266,6 +271,9 @@ def run(
     k_folds: number of cross-validation folds. Each run is one k-fold CV with a fresh random partition,
         so there are n_runs * k_folds R^2 values per target and condition
     split_by: "timepoint" (random time bins, as in the notebook) or "voc" (whole vocalizations)
+    min_shift_frac: circular null: each vocalization's target is rolled by a lag drawn uniformly from
+        [min_lag, L - min_lag] bins, with min_lag the larger of min_shift_frac * L and 10 spike-smoothing lengths
+        (for vocalizations too short for that, the target is rolled by L // 2)
     """
     check_regressor(regressor)
     assert split_by in ("timepoint", "voc")
@@ -321,6 +329,10 @@ def run(
     # splits and shuffles come from their own generators, so every regressor sees the same splits
     split_gen = np.random.default_rng(seed)
     shuffle_gen = np.random.default_rng(seed + 1)
+    shift_gen = np.random.default_rng(seed + 3)
+    voc_len = np.array([len(x) for x in spike_designs])
+    voc_start = np.concatenate([[0], np.cumsum(voc_len)[:-1]])
+    min_lag_smooth = int(np.ceil(10 * spike_smooth / SPIKE_BIN_SIZE))
 
     r2 = {t: {c: {"train": [], "test": []} for c in CONDITIONS} for t in names}
     weights = {t: [] for t in names}
@@ -329,6 +341,18 @@ def run(
 
     for run_ in range(1, n_runs + 1):
         print(f"run {run_}/{n_runs}")
+        # circular null targets: every vocalization's targets rolled by a random lag (same lag for all
+        # targets of a vocalization, fixed across the folds of this run)
+        lags = np.zeros(len(spike_designs), dtype=int)
+        for v, L in enumerate(voc_len):
+            min_lag = max(min_lag_smooth, int(min_shift_frac * L))
+            lags[v] = shift_gen.integers(min_lag, L - min_lag + 1) if L > 2 * min_lag else L // 2
+        Y_circ = {
+            k: np.concatenate([np.roll(y[s : s + L], lag)
+                               for s, L, lag in zip(voc_start, voc_len, lags)])
+            for k, y in Y.items()
+        }
+
         # a fresh random k-fold partition each run; every time bin is in the test set once per run
         if split_by == "timepoint":
             folds = np.array_split(split_gen.permutation(n_total), k_folds)
@@ -364,8 +388,15 @@ def run(
                 _, a, b = _fit_score(X[tr_v], y_tr, X[te_v], y_te)
                 r2[name]["global null"]["train"].append(a)
                 r2[name]["global null"]["test"].append(b)
+
+                y_c = Y_circ[name]
+                tr_c, te_c = tr[np.isfinite(y_c[tr])], te[np.isfinite(y_c[te])]
+                _, a, b = _fit_score(X[tr_c], y_c[tr_c], X[te_c], y_c[te_c])
+                r2[name]["circular null"]["train"].append(a)
+                r2[name]["circular null"]["test"].append(b)
                 print(f"  fold {fold + 1}/{k_folds} {name}: test R2 {r2[name]['real']['test'][-1]:.3f} "
-                      f"(local {r2[name]['local null']['test'][-1]:.3f}, global null {r2[name]['global null']['test'][-1]:.3f})")
+                      f"(local {r2[name]['local null']['test'][-1]:.3f}, global null {r2[name]['global null']['test'][-1]:.3f}, "
+                      f"circular null {r2[name]['circular null']['test'][-1]:.3f})")
             gc.collect()
 
     # ---- save results
@@ -415,7 +446,7 @@ def run(
     fig.savefig(os.path.join(out_dir, "average_weights.svg"), transparent=True)
     plt.close(fig)
 
-    fig, ax = plt.subplots(figsize=(max(6, 2.2 * len(names)), 4))
+    fig, ax = plt.subplots(figsize=(max(6, 2.9 * len(names)), 4))
     labels = [f"{t}\n{c}" for t in names for c in CONDITIONS]
     def _clean(v):
         v = np.asarray(v, dtype=float)
@@ -456,8 +487,9 @@ def compare(save_dir):
         for target, conds in s["test_r2"].items():
             row = {"regressor": s["regressor"], "target": target, "split_by": s["split_by"]}
             for c in CONDITIONS:
-                row[f"{c}_median"] = conds[c]["median"]
-                row[f"{c}_q25"], row[f"{c}_q75"] = conds[c]["iqr"] if conds[c]["iqr"] else (None, None)
+                cs = conds.get(c, {"median": None, "iqr": None})  # summaries from before a null was added
+                row[f"{c}_median"] = cs["median"]
+                row[f"{c}_q25"], row[f"{c}_q75"] = cs["iqr"] if cs["iqr"] else (None, None)
             rows.append(row)
     assert rows, f"no */summary.json under {save_dir}; run `run` first"
     df = pd.DataFrame(rows)
@@ -470,9 +502,9 @@ def compare(save_dir):
 
     fig, ax = plt.subplots(figsize=(max(6, 0.9 * len(df)), 4))
     x = np.arange(len(df))
-    w = 0.27
+    w = 0.8 / len(CONDITIONS)
     for k, c in enumerate(CONDITIONS):
-        ax.bar(x + (k - 1) * w, df[f"{c}_median"].astype(float), w, label=c,
+        ax.bar(x + (k - (len(CONDITIONS) - 1) / 2) * w, df[f"{c}_median"].astype(float), w, label=c,
                yerr=[(df[f"{c}_median"] - df[f"{c}_q25"]).astype(float),
                      (df[f"{c}_q75"] - df[f"{c}_median"]).astype(float)], capsize=2)
     ax.set_xticks(x)
