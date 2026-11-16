@@ -52,7 +52,7 @@ def find_best_checkpoint_dir(model_dir: str) -> str:
     )
     assert len(candidates) > 0, f"no model folders found in {model_dir}"
     lams = [float(c.split("_lambda_")[-1]) for c in candidates]
-    return candidates[int(np.argmin(np.abs(np.array(lams) - best_lambda)))]
+    return candidates[int(np.argmin(np.abs(np.array(lams) - best_lambda)))],best_lambda
 
 
 def resolve_model_path(model_path: str = "", fallback_dir: str = "") -> str:
@@ -75,10 +75,10 @@ def resolve_model_path(model_path: str = "", fallback_dir: str = "") -> str:
 
 def load_best_model(model_dir: str, device: str = "cuda"):
     """loads the best cross-validated model from `model_dir` (see `find_best_checkpoint_dir`)"""
-    path = find_best_checkpoint_dir(model_dir)
+    path,best_lam = find_best_checkpoint_dir(model_dir)
     model, *_ = load_model(path, device=device)
     model.eval()
-    return model
+    return model,best_lam
 
 
 def embed_vocalizations(

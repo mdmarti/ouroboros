@@ -283,7 +283,7 @@ def run(
 
     rec = load_recording(data_dir)
     n_vocs_total = len(rec[3])
-    gen = np.random.default_rng(seed=seed)
+    #gen = np.random.default_rng(seed=seed)
     design_path = os.path.join(save_dir, "designs.pkl")
     if os.path.isfile(design_path):
         with open(design_path, "rb") as f:
@@ -301,7 +301,7 @@ def run(
     else:
         if regressor == "ouro":
             assert model_path, "--model-path is required for --regressor ouro"
-            model = load_best_model(resolve_model_path(model_path), device=device)
+            model,_ = load_best_model(resolve_model_path(model_path), device=device)
             targets = ouro_targets(rec, designs, model, win_length, model_smooth, spike_smooth, max_len_t)
             del model
             torch.cuda.empty_cache()
