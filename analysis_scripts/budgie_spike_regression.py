@@ -12,13 +12,14 @@ regressors for a time-varying target at the end of that window. `--regressor` pi
               modulation, entropy (VocalPy; 1 ms frames; NaNs, e.g. pitch in silence, are left out of the fit)
     umap      a UMAP embedding (--umap-dims, default 2) of 1 ms log-spectrogram frames
 
-A LassoLarsCV regression is fit on a random subset and scored (R^2) on the rest, `n_runs` times, against
+A LassoLarsCV regression is fit with `k_folds`-fold cross-validation (fit on k-1 folds, scored (R^2) on the
+held-out fold), repeated `n_runs` times with fresh random folds, against
 two nulls:
 
-    - "null": regressors are spike trains shuffled in time within each neuron/vocalization
-    - "hard null": real regressors, but the targets are shuffled across time points
+    - "local null": regressors are spike trains shuffled in time within each neuron/vocalization
+    - "global null": real regressors, but the targets are shuffled across time points
 
-All regressors use the same spike designs and the same train/test splits, so their R^2s are directly
+All regressors use the same spike designs and the same cross-validation folds, so their R^2s are directly
 comparable. Targets are smoothed with the same Gaussian (`--spike-smooth`).
 
 The data folder holds one `*_cleaned.wav`, one `*.txt` (onset/offset) and one `*.mat` (`spikeTimes`) file.
@@ -34,14 +35,14 @@ Saved under --save-dir:
     <regressor>/targets.pkl        the targets for each vocalization
     <regressor>/r2s.pkl            train/test R^2 for every run, target and condition
     <regressor>/weights.npz        regression weights for every run
-    <regressor>/summary.json       median and IQR of test R^2
+    <regressor>/summary.json       median and IQR of test R^2 (over runs and folds)
     <regressor>/*.svg              weight maps, R^2 vs nulls, example predictions
     comparison.csv/.json/.svg      (from `compare`) every regressor and target together
 
 Differences from the notebook
 -----------------------------
-    - the gamma hard null shuffles gamma (the notebook shuffled omega, and scored the omega hard null
-      model with the null spike design); hard null R^2s are therefore not comparable to old numbers
+    - the gamma global null shuffles gamma (the notebook shuffled omega, and scored the omega global null
+      model with the local null spike design); global null R^2s are therefore not comparable to old numbers
     - `--split-by voc` splits train/test by vocalization. The notebook's behavior (`timepoint`, the default)
       puts neighboring time bins from the same call in both train and test, which inflates R^2
     - results and weights are cached per run as npz/pkl instead of pickling sklearn models
@@ -76,7 +77,7 @@ from analysis_scripts.common import format_axis, load_best_model, plt, resolve_m
 from utils import deriv_approx_dy
 
 SPIKE_BIN_SIZE = 0.001
-CONDITIONS = ["real", "null", "hard null"]
+CONDITIONS = ["real", "local null", "global null"]
 
 
 # ------------------------------------------------------------------ data
@@ -248,7 +249,7 @@ def run(
     spike_smooth=0.005,
     win_length=20,
     seed=92,
-    train_prop=0.5,
+    k_folds=5,
     n_runs=10,
     split_by="timepoint",
     n_vocs_vis=3,
@@ -262,16 +263,19 @@ def run(
     model_path: (ouro only) a trained model: the folder from `model_cv_lambdas`, or a single model's folder.
         This script does not train models
     umap_dims, umap_max_fit: (umap only) embedding dimension, and the max number of frames UMAP is fit on
+    k_folds: number of cross-validation folds. Each run is one k-fold CV with a fresh random partition,
+        so there are n_runs * k_folds R^2 values per target and condition
     split_by: "timepoint" (random time bins, as in the notebook) or "voc" (whole vocalizations)
     """
     check_regressor(regressor)
     assert split_by in ("timepoint", "voc")
+    assert k_folds >= 2, "k_folds must be at least 2"
     out_dir = os.path.join(save_dir, regressor)
     os.makedirs(out_dir, exist_ok=True)
 
     rec = load_recording(data_dir)
     n_vocs_total = len(rec[3])
-
+    gen = np.random.default_rng(seed=seed)
     design_path = os.path.join(save_dir, "designs.pkl")
     if os.path.isfile(design_path):
         with open(design_path, "rb") as f:
@@ -304,11 +308,14 @@ def run(
     spike_designs, null_designs = designs["spikes"], designs["nulls"]
     N = spike_designs[0].shape[1]
     X = np.vstack([x.reshape(x.shape[0], -1) for x in spike_designs])
-    X_null = np.vstack([x.reshape(x.shape[0], -1) for x in null_designs])
+    X_local_null = np.vstack([x.reshape(x.shape[0], -1) for x in null_designs])
+    
     Y = {k: np.hstack(v) for k, v in targets.items()}
     voc_id = np.concatenate([np.full(len(x), i) for i, x in enumerate(spike_designs)])
     n_total = len(X)
     names = list(Y)
+    if split_by == "voc":
+        assert k_folds <= len(spike_designs), "k_folds cannot exceed the number of vocalizations"
     print(f"{regressor}: {len(spike_designs)} vocalizations, {n_total} time bins, {N} neurons, targets {names}")
 
     # splits and shuffles come from their own generators, so every regressor sees the same splits
@@ -322,45 +329,44 @@ def run(
 
     for run_ in range(1, n_runs + 1):
         print(f"run {run_}/{n_runs}")
+        # a fresh random k-fold partition each run; every time bin is in the test set once per run
         if split_by == "timepoint":
-            order = split_gen.permutation(n_total)
-            n_train = int(round(train_prop * n_total))
-            tr, te = order[:n_train], order[n_train:]
+            folds = np.array_split(split_gen.permutation(n_total), k_folds)
         else:
-            vocs = split_gen.permutation(len(spike_designs))
-            train_vocs = vocs[: int(round(train_prop * len(vocs)))]
-            is_train = np.isin(voc_id, train_vocs)
-            tr, te = np.flatnonzero(is_train), np.flatnonzero(~is_train)
+            voc_folds = np.array_split(split_gen.permutation(len(spike_designs)), k_folds)
+            folds = [np.flatnonzero(np.isin(voc_id, v)) for v in voc_folds]
 
-        for name in names:
-            y = Y[name]
-            tr_v, te_v = tr[np.isfinite(y[tr])], te[np.isfinite(y[te])]
-            n_valid[name] = int(np.isfinite(y).sum())
-            if len(tr_v) < 100 or len(te_v) < 100:
-                print(f"  {name}: too few valid time bins, skipping")
-                for c in CONDITIONS:
-                    r2[name][c]["train"].append(np.nan)
-                    r2[name][c]["test"].append(np.nan)
-                weights[name].append(np.full((N, win_length), np.nan))
-                continue
-            lr, a, b = _fit_score(X[tr_v], y[tr_v], X[te_v], y[te_v])
-            r2[name]["real"]["train"].append(a)
-            r2[name]["real"]["test"].append(b)
-            weights[name].append(lr.coef_.reshape(N, win_length))
-            last_models[name] = lr
+        for fold, te in enumerate(folds):
+            tr = np.setdiff1d(np.arange(n_total), te)
+            for name in names:
+                y = Y[name]
+                tr_v, te_v = tr[np.isfinite(y[tr])], te[np.isfinite(y[te])]
+                n_valid[name] = int(np.isfinite(y).sum())
+                if len(tr_v) < 100 or len(te_v) < 100:
+                    print(f"  fold {fold + 1}/{k_folds} {name}: too few valid time bins, skipping")
+                    for c in CONDITIONS:
+                        r2[name][c]["train"].append(np.nan)
+                        r2[name][c]["test"].append(np.nan)
+                    weights[name].append(np.full((N, win_length), np.nan))
+                    continue
+                lr, a, b = _fit_score(X[tr_v], y[tr_v], X[te_v], y[te_v])
+                r2[name]["real"]["train"].append(a)
+                r2[name]["real"]["test"].append(b)
+                weights[name].append(lr.coef_.reshape(N, win_length))
+                last_models[name] = lr
 
-            _, a, b = _fit_score(X_null[tr_v], y[tr_v], X_null[te_v], y[te_v])
-            r2[name]["null"]["train"].append(a)
-            r2[name]["null"]["test"].append(b)
+                _, a, b = _fit_score(X_local_null[tr_v], y[tr_v], X_local_null[te_v], y[te_v])
+                r2[name]["local null"]["train"].append(a)
+                r2[name]["local null"]["test"].append(b)
 
-            y_tr = y[tr_v][shuffle_gen.permutation(len(tr_v))]
-            y_te = y[te_v][shuffle_gen.permutation(len(te_v))]
-            _, a, b = _fit_score(X[tr_v], y_tr, X[te_v], y_te)
-            r2[name]["hard null"]["train"].append(a)
-            r2[name]["hard null"]["test"].append(b)
-            print(f"  {name}: test R2 {r2[name]['real']['test'][-1]:.3f} "
-                  f"(null {r2[name]['null']['test'][-1]:.3f}, hard null {r2[name]['hard null']['test'][-1]:.3f})")
-        gc.collect()
+                y_tr = y[tr_v][shuffle_gen.permutation(len(tr_v))]
+                y_te = y[te_v][shuffle_gen.permutation(len(te_v))]
+                _, a, b = _fit_score(X[tr_v], y_tr, X[te_v], y_te)
+                r2[name]["global null"]["train"].append(a)
+                r2[name]["global null"]["test"].append(b)
+                print(f"  fold {fold + 1}/{k_folds} {name}: test R2 {r2[name]['real']['test'][-1]:.3f} "
+                      f"(local {r2[name]['local null']['test'][-1]:.3f}, global null {r2[name]['global null']['test'][-1]:.3f})")
+            gc.collect()
 
     # ---- save results
     weights = {k: np.stack(v) for k, v in weights.items()}
@@ -382,7 +388,7 @@ def run(
         "n_time_bins": int(n_total),
         "n_valid_time_bins": n_valid,
         "split_by": split_by,
-        "train_prop": train_prop,
+        "k_folds": k_folds,
         "n_runs": n_runs,
         "seed": seed,
         "test_r2": {t: {c: stats(r2[t][c]["test"]) for c in CONDITIONS} for t in names},
