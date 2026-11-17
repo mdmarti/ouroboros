@@ -221,7 +221,7 @@ def _corr(a, b):
 
 
 def flow_correlations(model, ts, audios, flows, sr, smooth_len_s=SMOOTH_LEN_S, n_shifts=200,
-                      min_shift_frac=0.1, seed=1111):
+                      min_shift_frac=0.1, min_shift_smooth_mult=2.0, seed=1111):
     """
     Pearson correlation, per recording, between the model's omega / gamma (smoothed on
     `smooth_len_s`) and the true flow (column 1 of the flow file; column 0 is time in ms).
@@ -229,8 +229,11 @@ def flow_correlations(model, ts, audios, flows, sr, smooth_len_s=SMOOTH_LEN_S, n
 
     Null: circular time shift. The model function is rolled by a random lag relative to the flow (within
     the same recording), `n_shifts` times. This keeps both signals' autocorrelation and marginals and breaks
-    only their alignment. Lags are drawn uniformly from [min_lag, L - min_lag], where min_lag is the larger of
-    `min_shift_frac` * L and 10 smoothing lengths, so shifted signals are well decorrelated from the original.
+    only their alignment. Lags are drawn without replacement from [min_lag, L - min_lag], where min_lag is
+    the larger of `min_shift_frac` * L and `min_shift_smooth_mult` smoothing lengths. Shorter minimum lags
+    leave the shifted function partly correlated with its original alignment (conservative p-values), and
+    nearby lags are strongly correlated, so the effective number of independent shifts is roughly
+    (L - 2 min_lag) / smoothing length, far fewer than n_shifts; treat p-values as coarse for short recordings.
     (Circular wrapping puts one discontinuity at the seam of the shifted function; for periodic stimuli
     a lag near a multiple of the period realigns the signals, which makes the null conservative.)
 
@@ -248,9 +251,10 @@ def flow_correlations(model, ts, audios, flows, sr, smooth_len_s=SMOOTH_LEN_S, n
     for omega, gamma, flow in zip(omegas, gammas, flows_t):
         L = min(len(omega), len(flow))
         omega, gamma, flow = omega[:L], gamma[:L], flow[:L]
-        min_lag = max(int(np.ceil(10 * smooth_len_s * sr)), int(min_shift_frac * L))
+        min_lag = max(int(np.ceil(min_shift_smooth_mult * smooth_len_s * sr)), int(min_shift_frac * L))
         assert L > 2 * min_lag, f"recording too short ({L} samples) for circular-shift null"
-        lags = gen.integers(min_lag, L - min_lag + 1, size=n_shifts)
+        all_lags = np.arange(min_lag, L - min_lag + 1)
+        lags = gen.choice(all_lags, size=min(n_shifts, len(all_lags)), replace=False)
         c_omega.append(_corr(omega, flow))
         c_gamma.append(_corr(gamma, flow))
         null_omega.append(np.array([_corr(np.roll(omega, k), flow) for k in lags]))
@@ -288,7 +292,7 @@ def run(
     """
     assert run_type in ("finetune", "scratch"), f"unknown run_type {run_type!r}"
     pretrained_dir = resolve_model_path(pretrained_dir)
-    arch = checkpoint_arch(find_best_checkpoint_dir(pretrained_dir))
+    arch = checkpoint_arch(find_best_checkpoint_dir(pretrained_dir)[0])
     if target_fs <= 0:
         target_fs = int(round(1 / load_best_model(pretrained_dir, device=device)[0].tau))
 
