@@ -48,7 +48,7 @@ from analysis_scripts.baselines import (
     resample_to,
     sat_time_series,
 )
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 
 from analysis_scripts.common import (
     embed_vocalizations,
@@ -58,10 +58,9 @@ from analysis_scripts.common import (
     plt,
     resolve_model_path,
 )
-from data.data_utils import aud_neur_ds
 from train.model_cv import model_cv_lambdas
 from train.train import save_model, train
-from utils import deriv_approx_dy, sse
+from utils import deriv_approx_d2y, deriv_approx_dy, sse
 
 DESCRIPTIONS = {'3':'400Hz: (1) spike train, constant interval',
                '4.2':'400Hz: (3) no spike after 10ms',
@@ -144,23 +143,38 @@ def checkpoint_arch(model_dir):
     }
 
 
-def make_loaders(audios, batch_size=4, val_frac=0.2):
+class VarLenDataset(Dataset):
     """
-    train/val/test loaders from whole recordings. Each recording is split in time (first 1-val_frac
-    for training, the rest for validation), and pieces are cropped to a common length so they can be
-    stacked. The validation set is what selects lambda (scratch) / is monitored (finetune); the held-out
+    recordings of different lengths, each kept whole: items are (x, dx/dt, d2x/dt2), each (L_i, 1), with the
+    derivatives from the same nine-point stencils as `aud_neur_ds`. Needs batch_size=1, since items can't be
+    stacked.
+    """
+
+    def __init__(self, audios):
+        self.items = []
+        for a in audios:
+            x = np.asarray(a, dtype=np.float64)[None, :, None]
+            self.items.append((x[0], deriv_approx_dy(x)[0], deriv_approx_d2y(x)[0]))
+
+    def __len__(self):
+        return len(self.items)
+
+    def __getitem__(self, idx):
+        return tuple(torch.from_numpy(v).type(torch.DoubleTensor) for v in self.items[idx])
+
+
+def make_loaders(audios, val_frac=0.2):
+    """
+    train/val/test loaders from whole recordings of any lengths, with batch_size=1 (every sample used, nothing
+    cropped or padded). Each recording is split in time (first 1-val_frac for training, the rest for
+    validation). The validation set is what selects lambda (scratch) / is monitored (finetune); the held-out
     *recordings* are never touched here. `test` is aliased to `val` since `model_cv_lambdas` asks for it.
     """
     tr = [a[: int(len(a) * (1 - val_frac))] for a in audios]
     va = [a[int(len(a) * (1 - val_frac)) :] for a in audios]
-
-    def loader(pieces, shuffle):
-        L = min(len(p) for p in pieces)
-        data = np.stack([p[:L, None] for p in pieces], axis=0).astype(np.float64)
-        return DataLoader(aud_neur_ds(data), batch_size=batch_size, shuffle=shuffle, num_workers=0)
-
-    val = loader(va, False)
-    return {"train": loader(tr, True), "val": val, "test": val}
+    train = DataLoader(VarLenDataset(tr), batch_size=1, shuffle=True, num_workers=0)
+    val = DataLoader(VarLenDataset(va), batch_size=1, shuffle=False, num_workers=0)
+    return {"train": train, "val": val, "test": val}
 
 
 def finetune_model(
@@ -277,7 +291,6 @@ def run(
     device: str = "cuda",
     num_epochs: int = 500,
     lr: float = 1e-4,
-    batch_size: int = 4,
     target_fs: int = 0,
 ):
     """
@@ -299,6 +312,7 @@ def run(
     times, audios, flows, spikes, sr, descriptions = load_coen_data(data_dir, target_fs=target_fs)
     dt = 1 / sr
     n = len(times)
+    print(f"{n} recordings, {sr} Hz; lengths (samples): {[len(a) for a in audios]}")
     run_root = os.path.join(updated_model_path, run_type)
     out_dir = os.path.join(save_dir, run_type)
     os.makedirs(out_dir, exist_ok=True)
@@ -314,7 +328,7 @@ def run(
             if glob.glob(os.path.join(run_dir, "*.tar")):
                 model,best_lambda = load_best_model(run_dir, device=device)  # already fine-tuned
             else:
-                dls = make_loaders([audios[i] for i in train_inds], batch_size=batch_size)
+                dls = make_loaders([audios[i] for i in train_inds])
                 model,best_lambda = load_best_model(pretrained_dir, device=device)
                 model = finetune_model(
                     model, dls, dt, num_epochs, run_dir,
@@ -325,11 +339,12 @@ def run(
             if os.path.isfile(os.path.join(run_dir, "cv_errs.csv")):
                 model,best_lambda = load_best_model(run_dir, device=device)  # cv already done
             else:
-                dls = make_loaders([audios[i] for i in train_inds], batch_size=batch_size)
+                dls = make_loaders([audios[i] for i in train_inds])
                 model = model_cv_lambdas(
                     dls=dls, dt=dt, n_epochs=num_epochs, lr=1e-3, n_kernels=arch["n kernels"],
                     expand_factor=arch["expand factor"], n_layers=arch["n layers"],
                     d_state=arch["d state"], d_conv=arch["d conv"], tau=dt, model_path=run_dir, device=device,
+                    vis_freq=0,  # train()'s diagnostic plots need segments > ~650 samples; ours are shorter
                 )
         model.eval()
 

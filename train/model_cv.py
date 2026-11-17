@@ -32,6 +32,7 @@ def model_cv_lambdas(
     model_path: str = "",
     save_freq: int = 5,
     device: str = "cuda",
+    vis_freq: int = -1,
 ) -> torch.nn.Module:
     """
     This function trains models and cross-validates across regularization strengths.
@@ -56,6 +57,9 @@ def model_cv_lambdas(
         - model_path: place to save all the models
         - save_freq: how often to save out our models
         - device: device to train on. falls back to cpu if cuda is requested but unavailable
+        - vis_freq: how often (in gradient updates) `train` saves diagnostic plots of the model's reconstructions.
+            Default (-1) is max(n_epochs // 10, 1). Pass 0 to turn plotting off; the plots need every
+            segment to be at least ~650 samples long, so set 0 for short segments
 
     returns
     -----
@@ -134,7 +138,7 @@ def model_cv_lambdas(
                 val_freq=1,
                 runDir=model_path_full_poly,
                 dt=dt,
-                vis_freq=max(n_epochs // 10, 1),
+                vis_freq=max(n_epochs // 10, 1) if vis_freq < 0 else vis_freq,
                 smoothing=False,
                 reg_weights=reg_weights,
                 start_epoch=start_epoch,
