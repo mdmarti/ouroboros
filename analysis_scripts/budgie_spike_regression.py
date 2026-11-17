@@ -11,6 +11,11 @@ regressors for a time-varying target at the end of that window. `--regressor` pi
     acoustic  SAT acoustic features: amplitude, pitch, goodness of pitch, frequency modulation, amplitude
               modulation, entropy (VocalPy; 1 ms frames; NaNs, e.g. pitch in silence, are left out of the fit)
     umap      a UMAP embedding (--umap-dims, default 2) of 1 ms log-spectrogram frames
+    residuals Ouroboros' omega(t) and gamma(t) after regressing out all SAT acoustic features (hierarchical:
+              step 1 is a linear regression of each latent on all acoustic features at the same time bin;
+              step 2, the windowed spike regression, is run on the step-1 residuals, so it asks what the
+              spikes predict beyond acoustics). Needs --model-path; reuses <save-dir>/ouro and
+              <save-dir>/acoustic targets if they exist
 
 A LassoLarsCV regression is fit with `k_folds`-fold cross-validation (fit on k-1 folds, scored (R^2) on the
 held-out fold), repeated `n_runs` times with fresh random folds, against
@@ -31,11 +36,14 @@ The data folder holds one `*_cleaned.wav`, one `*.txt` (onset/offset) and one `*
         --model-path MODELS/budgies --data-dir DATA/Budgie --save-dir OUT
     python -m analysis_scripts.budgie_spike_regression run --regressor acoustic --data-dir DATA/Budgie --save-dir OUT
     python -m analysis_scripts.budgie_spike_regression run --regressor umap     --data-dir DATA/Budgie --save-dir OUT
+    python -m analysis_scripts.budgie_spike_regression run --regressor residuals \
+        --model-path MODELS/budgies --data-dir DATA/Budgie --save-dir OUT
     python -m analysis_scripts.budgie_spike_regression compare --save-dir OUT     # all regressors, side by side
 
 Saved under --save-dir:
     designs.pkl                    spike design matrices (shared by all regressors)
     <regressor>/targets.pkl        the targets for each vocalization
+    residuals/acoustic_fit.json    how much of omega / gamma the acoustic features explain (step 1 R^2)
     <regressor>/r2s.pkl            train/test R^2 for every run, target and condition
     <regressor>/weights.npz        regression weights for every run
     <regressor>/summary.json       median and IQR of test R^2 (over runs and folds)
@@ -237,6 +245,32 @@ def umap_targets(rec, designs, win_length, spike_smooth, umap_dims, seed, max_fi
 # ------------------------------------------------------------------ regression
 
 
+def residual_targets(ouro, acoustic):
+    """
+    hierarchical step 1: regress each Ouroboros latent on all acoustic features (OLS with intercept, features
+    z-scored, fit on every time bin where the latent and all features are defined) and keep the residuals.
+    Time bins where a feature or the latent is NaN (e.g. pitch in silence) stay NaN, so the spike regression
+    leaves them out. The fit is in-sample, on all vocalizations.
+    returns ({"<latent>_resid": [per-vocalization residuals]}, {"<latent>": step-1 R^2})
+    """
+    lens = [len(v) for v in next(iter(ouro.values()))]
+    cuts = np.cumsum(lens)[:-1]
+    A = np.stack([np.hstack(acoustic[k]) for k in acoustic], axis=1)
+    A_ok = np.all(np.isfinite(A), axis=1)
+    mu, sd = A[A_ok].mean(0), A[A_ok].std(0) + 1e-12
+    A = np.column_stack([np.ones(len(A)), (A - mu) / sd])
+    out, r2 = {}, {}
+    for name, per_voc in ouro.items():
+        y = np.hstack(per_voc)
+        ok = A_ok & np.isfinite(y)
+        beta, *_ = np.linalg.lstsq(A[ok], y[ok], rcond=None)
+        resid = np.full(len(y), np.nan)
+        resid[ok] = y[ok] - A[ok] @ beta
+        r2[name] = float(1 - resid[ok].var() / y[ok].var())
+        out[f"{name}_resid"] = np.split(resid, cuts)
+    return out, r2
+
+
 def _fit_score(train_x, train_y, test_x, test_y):
     lr = LassoLarsCV().fit(train_x, train_y)
     return lr, lr.score(train_x, train_y), lr.score(test_x, test_y)
@@ -264,7 +298,7 @@ def run(
     """
     data_dir: folder with the budgie audio, segments and spikes
     save_dir: where everything is saved (see module docstring). Outputs for this regressor go in save_dir/<regressor>
-    regressor: ouro, acoustic or umap
+    regressor: ouro, acoustic, umap or residuals (ouro latents with all acoustic features regressed out)
     model_path: (ouro only) a trained model: the folder from `model_cv_lambdas`, or a single model's folder.
         This script does not train models
     umap_dims, umap_max_fit: (umap only) embedding dimension, and the max number of frames UMAP is fit on
@@ -275,7 +309,8 @@ def run(
         [min_lag, L - min_lag] bins, with min_lag the larger of min_shift_frac * L and 10 spike-smoothing lengths
         (for vocalizations too short for that, the target is rolled by L // 2)
     """
-    check_regressor(regressor)
+    if regressor != "residuals":
+        check_regressor(regressor)
     assert split_by in ("timepoint", "voc")
     assert k_folds >= 2, "k_folds must be at least 2"
     out_dir = os.path.join(save_dir, regressor)
@@ -294,23 +329,46 @@ def run(
         with open(design_path, "wb") as f:
             pickle.dump(designs, f)
 
-    target_path = os.path.join(out_dir, "targets.pkl")
-    if os.path.isfile(target_path):
-        with open(target_path, "rb") as f:
-            targets = pickle.load(f)
-    else:
-        if regressor == "ouro":
-            assert model_path, "--model-path is required for --regressor ouro"
-            model,_ = load_best_model(resolve_model_path(model_path), device=device)
-            targets = ouro_targets(rec, designs, model, win_length, model_smooth, spike_smooth, max_len_t)
+    def compute_targets(reg):
+        if reg == "ouro":
+            assert model_path, "--model-path is required for --regressor ouro / residuals"
+            model = load_best_model(resolve_model_path(model_path), device=device)
+            out = ouro_targets(rec, designs, model, win_length, model_smooth, spike_smooth, max_len_t)
             del model
             torch.cuda.empty_cache()
-        elif regressor == "acoustic":
-            targets = acoustic_targets(rec, designs, win_length, spike_smooth)
+            return out
+        if reg == "acoustic":
+            return acoustic_targets(rec, designs, win_length, spike_smooth)
+        return umap_targets(rec, designs, win_length, spike_smooth, umap_dims, seed, umap_max_fit)
+
+    def cached_targets(reg):
+        """targets of regressor `reg`, from <save_dir>/<reg>/targets.pkl if present (else computed and saved)"""
+        path = os.path.join(save_dir, reg, "targets.pkl")
+        if os.path.isfile(path):
+            with open(path, "rb") as f:
+                return pickle.load(f)
+        out = compute_targets(reg)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            pickle.dump(out, f)
+        return out
+
+    acoustic_fit_r2 = None
+    target_path = os.path.join(out_dir, "targets.pkl")
+    fit_path = os.path.join(out_dir, "acoustic_fit.json")
+    if regressor == "residuals":
+        if os.path.isfile(target_path) and os.path.isfile(fit_path):
+            targets = cached_targets("residuals")
+            acoustic_fit_r2 = json.load(open(fit_path))
         else:
-            targets = umap_targets(rec, designs, win_length, spike_smooth, umap_dims, seed, umap_max_fit)
-        with open(target_path, "wb") as f:
-            pickle.dump(targets, f)
+            targets, acoustic_fit_r2 = residual_targets(cached_targets("ouro"), cached_targets("acoustic"))
+            with open(target_path, "wb") as f:
+                pickle.dump(targets, f)
+            with open(fit_path, "w") as f:
+                json.dump(acoustic_fit_r2, f, indent=2)
+        print(f"R^2 of acoustic features for the latents (removed from the targets): {acoustic_fit_r2}")
+    else:
+        targets = cached_targets(regressor)
     gc.collect()
 
     spike_designs, null_designs = designs["spikes"], designs["nulls"]
@@ -424,6 +482,8 @@ def run(
         "seed": seed,
         "test_r2": {t: {c: stats(r2[t][c]["test"]) for c in CONDITIONS} for t in names},
     }
+    if acoustic_fit_r2 is not None:
+        summary["acoustic_fit_r2"] = acoustic_fit_r2
     with open(os.path.join(out_dir, "summary.json"), "w") as f:
         json.dump(summary, f, indent=2)
     print(json.dumps(summary["test_r2"], indent=2))
